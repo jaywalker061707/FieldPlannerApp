@@ -195,9 +195,16 @@ function mergeDb(a,b){
   }
   return out;
 }
-let syncing=false,syncTimer=null;
+let syncing=false,syncTimer=null,lastSyncErr='';
 function queueSync(){if(!getToken())return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncNow(),4000);}
-async function syncNow(retry){
+function explainSyncErr(msg){
+  if(/401/.test(msg))return'GitHub rejected the token (401). It may be mistyped, expired, or revoked — generate a new one and paste it again.';
+  if(/404/.test(msg))return'GitHub says the FieldPlanner repo is not reachable with this token (404). When creating the token, make sure Repository access is "Only select repositories" with FieldPlanner selected, and Permissions → Contents is "Read and write". Also use a fine-grained token (github.com/settings/personal-access-tokens/new), not a classic one.';
+  if(/403/.test(msg))return'GitHub refused the request (403) — the token may lack Contents: Read and write permission, or you hit a rate limit. Check the token permissions.';
+  if(/Failed to fetch|NetworkError|Load failed/i.test(msg))return'Could not reach GitHub — check your internet connection (or a firewall is blocking api.github.com).';
+  return msg;
+}
+async function syncNow(retry,manual){
   if(!getToken()){setSync('','Set up sync');return;}
   if(syncing)return;syncing=true;setSync('','Syncing…');
   try{
@@ -210,14 +217,55 @@ async function syncNow(retry){
     }else{
       await ghPutFile(JSON.stringify(db),null);
     }
-    clearDirty();localStorage.setItem('fp_lastsync',String(Date.now()));
+    clearDirty();lastSyncErr='';localStorage.setItem('fp_lastsync',String(Date.now()));
     setSync('ok','Synced');render();
   }catch(e){
-    if(!retry&&/40[49]|422/.test(e.message)){syncing=false;return syncNow(true);}
+    if(!retry&&/409|422/.test(e.message)){syncing=false;return syncNow(true,manual);}
+    lastSyncErr=explainSyncErr(e.message||String(e));
     setSync('err','Sync error');console.warn(e);
+    if(manual)alert('Sync failed.\n\n'+lastSyncErr);
+    if(state.view==='settings')render();
   }finally{syncing=false;}
 }
-function manualSync(){if(!getToken()){go('settings');return;}syncNow();}
+function manualSync(){if(!getToken()){go('settings');return;}syncNow(false,true);}
+/* ---- bill photos (stored as files in the private repo) ---- */
+function downscale(file,max,q){return new Promise((res,rej)=>{
+  const img=new Image();
+  img.onload=()=>{const sc=Math.min(1,max/Math.max(img.width,img.height));
+    const c=document.createElement('canvas');
+    c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    res(c.toDataURL('image/jpeg',q));};
+  img.onerror=rej;img.src=URL.createObjectURL(file);});}
+async function uploadBillPhoto(file,cust){
+  if(!getToken()){alert('Set up sync first (More → Settings & Sync) so bill photos have somewhere to live.');return;}
+  const b64=(await downscale(file,1400,.8)).split(',')[1];
+  const path='data/bills/'+cust.id+'.jpg';
+  let sha=null;
+  try{const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}?ref=main&_=${Date.now()}`,
+    {headers:ghHeaders(),cache:'no-store'});if(r.ok)sha=(await r.json()).sha;}catch(e){}
+  const body={message:'Bill photo',content:b64,branch:'main'};if(sha)body.sha=sha;
+  const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}`,
+    {method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('upload failed '+r.status);
+  cust.billFile=path;cust.updatedAt=Date.now();
+  persist();markDirty();queueSync();render();
+}
+async function viewBill(custId){
+  const c=custById(custId);if(!c)return;
+  if(c.billFile){
+    openModal(`<h2>${esc(c.name)} — bill <button class="x" onclick="closeModal()">✕</button></h2>
+      <div id="billBox" class="muted small">Loading bill…</div>`);
+    try{
+      const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${c.billFile}?ref=main`,
+        {headers:Object.assign({'Accept':'application/vnd.github.raw'},ghHeaders()),cache:'no-store'});
+      if(!r.ok)throw new Error(r.status);
+      const blob=await r.blob();
+      const box=$('#billBox');
+      if(box)box.innerHTML=`<img src="${URL.createObjectURL(blob)}" style="max-width:100%;border-radius:10px">`;
+    }catch(e){const box=$('#billBox');if(box)box.textContent='Could not load the bill — this needs internet and the sync token on this device.';}
+  }else if(c.billLink){window.open(c.billLink,'_blank');}
+}
 window.addEventListener('online',()=>{if(localStorage.getItem('fp_dirty'))syncNow();});
 
 /* ============ navigation / render ============ */
@@ -252,18 +300,17 @@ function stopAddr(s){const c=s.customerId?custById(s.customerId):null;return s.a
 function bizRow(s){
   const c=s.customerId?custById(s.customerId):null;
   const addr=stopAddr(s);
-  const bill=(c&&c.billLink)||s.billLink||'';
   const done=s.status==='Done';
   return `<div class="bizrow ${done?'done':''}">
     <input type="checkbox" ${done?'checked':''} onchange="setVisited('${s.id}',this.checked)">
     <div class="grow" onclick="openStopForm('${s.id}')" style="cursor:pointer">
       <div class="bname">${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
-      <div class="muted small">${esc(s.activity||'')}${s.time?' · '+fmtTime(s.time):''}${addr?' · '+esc(addr):''}${s.notes?' · '+esc(s.notes):''}</div>
+      <div class="muted small">${esc(s.activity||'')}${s.time?' · '+fmtTime(s.time):''}${c&&c.contact?' · 👤 '+esc(c.contact):''}${addr?' · '+esc(addr):''}${s.notes?' · '+esc(s.notes):''}</div>
     </div>
     <div class="links" style="white-space:nowrap">
       <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
       <a href="${esc(mapUrl(addr||s.business))}" target="_blank" rel="noopener">🧭</a>
-      ${bill?`<a href="${esc(bill)}" target="_blank" rel="noopener">📄</a>`:''}
+      ${c&&(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
       ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
     </div>
   </div>`;
@@ -458,6 +505,7 @@ function timeOptions(sel){
 function custDatalist(){return `<datalist id="custlist">${live('customers').map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>`;}
 function openStopForm(id,date){
   const s=id?db.stops.find(x=>x.id===id):{date:date||state.day,time:'',business:'',address:'',activity:'Visit',status:'Planned',notes:'',unplanned:false};
+  const c=s.customerId?custById(s.customerId):custByName(s.business||'');
   openModal(`
   <h2>${id?'Edit Business Stop':'Add Business'} <button class="x" onclick="closeModal()">✕</button></h2>
   <form onsubmit="return submitStop(event,'${id||''}')">
@@ -467,11 +515,16 @@ function openStopForm(id,date){
       oninput="fillFromCustomer(this)" autocomplete="off">
     ${custDatalist()}
     <label>Address (optional — Maps finds most places by name)</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
+    <label>POC name</label><input name="pocName" id="stopPocName" value="${esc(c?c.contact:'')}">
+    <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
+    <label>POC email</label><input name="pocEmail" id="stopPocEmail" type="email" value="${esc(c?c.email:'')}">
+    <label>Bill photo ${c&&c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
+    <input type="file" name="billPhoto" accept="image/*">
     <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
     <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
     <label style="display:flex;align-items:center;gap:8px;text-transform:none">
       <input type="checkbox" name="unplanned" style="width:auto" ${s.unplanned?'checked':''}> Unplanned stop</label>
-    <label>Notes (POC info, confirmations, what happened…)</label><textarea name="notes">${esc(s.notes||'')}</textarea>
+    <label>Notes (confirmations, what happened…)</label><textarea name="notes">${esc(s.notes||'')}</textarea>
     <button class="primary" type="submit">Save</button>
     ${id?`<button type="button" class="ghost" style="width:100%;margin-top:8px"
       onclick="closeModal();actionForStop('${id}')">＋ Action item for this business</button>
@@ -480,15 +533,38 @@ function openStopForm(id,date){
 }
 function fillFromCustomer(inp){
   const c=custByName(inp.value);
-  if(c&&!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
+  if(!c)return;
+  if(!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
+  if(!$('#stopPocName').value)$('#stopPocName').value=c.contact||'';
+  if(!$('#stopPocPhone').value)$('#stopPocPhone').value=c.phone||'';
+  if(!$('#stopPocEmail').value)$('#stopPocEmail').value=c.email||'';
+}
+function upsertCustomerFromStop(f,s){
+  let c=custByName(s.business);
+  const poc={contact:String(f.get('pocName')||'').trim(),phone:String(f.get('pocPhone')||'').trim(),email:String(f.get('pocEmail')||'').trim()};
+  if(!c){
+    c={id:uid(),name:s.business,account:'',address:s.address||'',contact:poc.contact,phone:poc.phone,
+       email:poc.email,billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()};
+    db.customers.push(c);
+  }else{
+    if(poc.contact)c.contact=poc.contact;
+    if(poc.phone)c.phone=poc.phone;
+    if(poc.email)c.email=poc.email;
+    if(s.address&&!c.address)c.address=s.address;
+    c.updatedAt=Date.now();
+  }
+  return c;
 }
 function submitStop(e,id){
   e.preventDefault();const f=new FormData(e.target);
-  const c=custByName(f.get('business'));
   const s=id?db.stops.find(x=>x.id===id):{id:uid()};
   Object.assign(s,{date:f.get('date'),time:f.get('time'),business:f.get('business').trim(),
     address:f.get('address').trim(),activity:f.get('activity'),status:f.get('status'),
-    notes:f.get('notes').trim(),unplanned:!!f.get('unplanned'),customerId:c?c.id:null});
+    notes:f.get('notes').trim(),unplanned:!!f.get('unplanned')});
+  const c=upsertCustomerFromStop(f,s);
+  s.customerId=c.id;
+  const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
+  if(bf)uploadBillPhoto(bf,c).catch(()=>alert('Bill photo upload failed — check your signal and try again from this business.'));
   saveRec('stops',s);closeModal();return false;
 }
 
@@ -526,7 +602,7 @@ function openCustomerDetail(id){
     ${c.phone?`<a href="tel:${esc(c.phone)}">📞 Call</a>`:''}
     ${c.email?`<a href="mailto:${esc(c.email)}">✉️ Email</a>`:''}
     <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭 Map</a>
-    ${c.billLink?`<a href="${esc(c.billLink)}" target="_blank" rel="noopener">📄 Bill</a>`:''}
+    ${(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄 Bill</a>`:''}
   </div>
   <div class="muted small">${c.account?'Account #'+esc(c.account)+' · ':''}${esc(c.contact||'')}</div>
   ${c.notes?`<div class="small" style="margin-top:6px">${esc(c.notes)}</div>`:''}
@@ -554,6 +630,8 @@ function openCustomerForm(id){
     <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
     <label>Bill link</label><input name="billLink" value="${esc(c.billLink||'')}" placeholder="https://…">
+    <label>Bill photo ${c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
+    <input type="file" name="billPhoto" accept="image/*">
     <label>Last visit</label><input name="lastVisit" type="date" value="${esc(c.lastVisit||'')}">
     <label>Notes</label><textarea name="notes">${esc(c.notes||'')}</textarea>
     <button class="primary" type="submit">Save Customer</button>
@@ -564,6 +642,8 @@ function submitCustomer(e,id){
   e.preventDefault();const f=new FormData(e.target);
   const c=id?custById(id):{id:uid()};
   for(const k of['name','account','address','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
+  const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
+  if(bf)uploadBillPhoto(bf,c).catch(()=>alert('Bill photo upload failed — check your signal and try again.'));
   saveRec('customers',c);closeModal();return false;
 }
 
@@ -722,6 +802,7 @@ function rSettings(){
   <div class="card">
     <div class="small" style="margin-bottom:8px">Status: <b>${tok?(localStorage.getItem('fp_dirty')?'Changes not yet synced':'Connected'):'Not connected'}</b>
     ${last?`<span class="muted"> · last sync ${new Date(+last).toLocaleString()}</span>`:''}</div>
+    ${lastSyncErr?`<div class="notice" style="border-color:#e6b8b0;background:#fdeae6"><b>Last sync error:</b> ${esc(lastSyncErr)}</div>`:''}
     <label>GitHub token</label>
     <input id="tokIn" type="password" placeholder="${tok?'••••••••  (saved)':'Paste your token here'}">
     <button class="primary" onclick="saveToken()">Save & Sync Now</button>
@@ -750,7 +831,7 @@ function saveToken(){
   const v=$('#tokIn').value.trim();
   if(v)localStorage.setItem('fp_token',v);
   if(!getToken()){alert('Paste a token first.');return;}
-  syncNow();render();
+  syncNow(false,true);render();
 }
 function exportData(){
   const blob=new Blob([JSON.stringify(db,null,1)],{type:'application/json'});
