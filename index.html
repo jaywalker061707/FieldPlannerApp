@@ -262,7 +262,7 @@ function bizRow(s){
     </div>
     <div class="links" style="white-space:nowrap">
       <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
-      ${addr?`<a href="${esc(mapUrl(addr))}" target="_blank" rel="noopener">🧭</a>`:''}
+      <a href="${esc(mapUrl(addr||s.business))}" target="_blank" rel="noopener">🧭</a>
       ${bill?`<a href="${esc(bill)}" target="_blank" rel="noopener">📄</a>`:''}
       ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
     </div>
@@ -359,8 +359,8 @@ function visitedWithAddr(d){
   return stopsOn(d).filter(s=>!isEvent(s)&&s.status==='Done');
 }
 function openRoute(d){
-  const addrs=visitedWithAddr(d).map(stopAddr).filter(Boolean);
-  if(!addrs.length){alert('No visited stops with addresses yet.');return;}
+  const addrs=visitedWithAddr(d).map(s=>stopAddr(s)||s.business).filter(Boolean);
+  if(!addrs.length){alert('No visited stops yet.');return;}
   window.open('https://www.google.com/maps/dir/'+addrs.map(encodeURIComponent).join('/'),'_blank');
 }
 function fillRouteNotes(d){
@@ -466,7 +466,7 @@ function openStopForm(id,date){
     <label>Business</label><input name="business" list="custlist" value="${esc(s.business)}" required
       oninput="fillFromCustomer(this)" autocomplete="off">
     ${custDatalist()}
-    <label>Address</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
+    <label>Address (optional — Maps finds most places by name)</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
     <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
     <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
     <label style="display:flex;align-items:center;gap:8px;text-transform:none">
@@ -510,7 +510,7 @@ function rCustomers(){
       </div>
       <div class="links" onclick="event.stopPropagation()">
         ${c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
-        ${c.address?`<a href="${esc(mapUrl(c.address))}" target="_blank" rel="noopener">🧭</a>`:''}
+        <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭</a>
       </div>
     </div>
   </div>`).join(''):`<div class="empty">No customers yet.<br>Tap ＋ to add your first customer.</div>`}`;
@@ -525,7 +525,7 @@ function openCustomerDetail(id){
   <div class="links" style="margin-bottom:8px">
     ${c.phone?`<a href="tel:${esc(c.phone)}">📞 Call</a>`:''}
     ${c.email?`<a href="mailto:${esc(c.email)}">✉️ Email</a>`:''}
-    ${c.address?`<a href="${esc(mapUrl(c.address))}" target="_blank" rel="noopener">🧭 Map</a>`:''}
+    <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭 Map</a>
     ${c.billLink?`<a href="${esc(c.billLink)}" target="_blank" rel="noopener">📄 Bill</a>`:''}
   </div>
   <div class="muted small">${c.account?'Account #'+esc(c.account)+' · ':''}${esc(c.contact||'')}</div>
@@ -549,7 +549,7 @@ function openCustomerForm(id){
   <form onsubmit="return submitCustomer(event,'${id||''}')">
     <label>Business name</label><input name="name" value="${esc(c.name)}" required>
     <label>Account #</label><input name="account" value="${esc(c.account||'')}">
-    <label>Address</label><input name="address" value="${esc(c.address||'')}">
+    <label>Address (optional — Maps finds most places by name)</label><input name="address" value="${esc(c.address||'')}">
     <label>Primary contact</label><input name="contact" value="${esc(c.contact||'')}">
     <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
