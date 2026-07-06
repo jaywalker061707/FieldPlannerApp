@@ -237,10 +237,19 @@ function downscale(file,max,q){return new Promise((res,rej)=>{
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);
     res(c.toDataURL('image/jpeg',q));};
   img.onerror=rej;img.src=URL.createObjectURL(file);});}
+function fileB64(file){return new Promise((res,rej)=>{
+  const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
 async function uploadBillPhoto(file,cust){
   if(!getToken()){alert('Set up sync first (More → Settings & Sync) so bill photos have somewhere to live.');return;}
-  const b64=(await downscale(file,1400,.8)).split(',')[1];
-  const path='data/bills/'+cust.id+'.jpg';
+  let b64,ext;
+  if(file.type==='application/pdf'){
+    if(file.size>20*1024*1024){alert('That PDF is over 20 MB — too big to store. Use a screenshot instead.');return;}
+    b64=await fileB64(file);ext='pdf';
+  }else{
+    try{b64=(await downscale(file,1400,.8)).split(',')[1];ext='jpg';}
+    catch(e){alert('Could not read that file as an image on this device. Use a screenshot, JPEG/PNG, or a PDF.');return;}
+  }
+  const path='data/bills/'+cust.id+'.'+ext;
   let sha=null;
   try{const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}?ref=main&_=${Date.now()}`,
     {headers:ghHeaders(),cache:'no-store'});if(r.ok)sha=(await r.json()).sha;}catch(e){}
@@ -258,11 +267,16 @@ async function viewBill(custId){
       <div id="billBox" class="muted small">Loading bill…</div>`);
     try{
       const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${c.billFile}?ref=main`,
-        {headers:Object.assign({'Accept':'application/vnd.github.raw'},ghHeaders()),cache:'no-store'});
+        {headers:Object.assign(ghHeaders(),{'Accept':'application/vnd.github.raw'}),cache:'no-store'});
       if(!r.ok)throw new Error(r.status);
-      const blob=await r.blob();
+      const buf=await r.arrayBuffer();
+      const isPdf=c.billFile.endsWith('.pdf');
+      const url=URL.createObjectURL(new Blob([buf],{type:isPdf?'application/pdf':'image/jpeg'}));
       const box=$('#billBox');
-      if(box)box.innerHTML=`<img src="${URL.createObjectURL(blob)}" style="max-width:100%;border-radius:10px">`;
+      if(box)box.innerHTML=isPdf
+        ?`<iframe src="${url}" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:10px"></iframe>
+          <a href="${url}" target="_blank" style="display:block;margin-top:8px;color:var(--teal);font-weight:600">Open full screen</a>`
+        :`<img src="${url}" style="max-width:100%;border-radius:10px">`;
     }catch(e){const box=$('#billBox');if(box)box.textContent='Could not load the bill — this needs internet and the sync token on this device.';}
   }else if(c.billLink){window.open(c.billLink,'_blank');}
 }
@@ -281,7 +295,7 @@ function render(){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===state.view||
     (b.dataset.v==='more'&&['more','dashboard','boss','mileage','settings'].includes(state.view))));
   const titles={today:"Today",week:"Week",customers:"Customers",actions:"Action Items",more:"More",
-    dashboard:"Dashboard",boss:"Boss PDF",mileage:"Mileage Log",settings:"Settings"};
+    dashboard:"Dashboard",boss:"Weekly Overview",mileage:"Mileage Log",settings:"Settings"};
   $('#hTitle').textContent="Field Planner — "+(titles[state.view]||'');
   $('#fab').style.display=['more','dashboard','boss','mileage','settings'].includes(state.view)?'none':'block';
   const r={today:rToday,week:rWeek,customers:rCustomers,actions:rActions,more:rMore,
@@ -470,7 +484,7 @@ function rWeek(){
     <button onclick="go('week',{week:'${addDays(wk,7)}'})">›</button>
   </div>
   <div class="row no-print" style="margin-bottom:10px">
-    <button class="ghost grow" onclick="go('boss',{week:'${wk}'})">📄 Boss PDF view</button>
+    <button class="ghost grow" onclick="go('boss',{week:'${wk}'})">📄 Weekly Overview</button>
     <button class="ghost grow" onclick="go('dashboard',{week:'${wk}'})">📊 Dashboard</button>
   </div>`;
   for(let i=0;i<7;i++){
@@ -519,7 +533,7 @@ function openStopForm(id,date){
     <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
     <label>POC email</label><input name="pocEmail" id="stopPocEmail" type="email" value="${esc(c?c.email:'')}">
     <label>Bill photo ${c&&c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
-    <input type="file" name="billPhoto" accept="image/*">
+    <input type="file" name="billPhoto" accept="image/*,application/pdf">
     <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
     <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
     <label style="display:flex;align-items:center;gap:8px;text-transform:none">
@@ -631,7 +645,7 @@ function openCustomerForm(id){
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
     <label>Bill link</label><input name="billLink" value="${esc(c.billLink||'')}" placeholder="https://…">
     <label>Bill photo ${c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
-    <input type="file" name="billPhoto" accept="image/*">
+    <input type="file" name="billPhoto" accept="image/*,application/pdf">
     <label>Last visit</label><input name="lastVisit" type="date" value="${esc(c.lastVisit||'')}">
     <label>Notes</label><textarea name="notes">${esc(c.notes||'')}</textarea>
     <button class="primary" type="submit">Save Customer</button>
@@ -716,7 +730,7 @@ function submitAction(e,id){
 function rMore(){
   return `<div class="morelist">
     <button onclick="go('dashboard')"><span class="ico">📊</span>Dashboard</button>
-    <button onclick="go('boss')"><span class="ico">📄</span>Boss PDF</button>
+    <button onclick="go('boss')"><span class="ico">📄</span>Weekly Overview</button>
     <button onclick="go('mileage')"><span class="ico">🚗</span>Mileage Log</button>
     <button onclick="go('settings')"><span class="ico">⚙️</span>Settings & Sync</button>
   </div>
@@ -762,13 +776,16 @@ function rBoss(){
   const wk=state.week;
   let rows='';
   for(let i=0;i<5;i++){
-    const d=addDays(wk,i),stops=stopsOn(d).filter(s=>!isEvent(s)&&!['Lunch','Admin','Drive Time'].includes(s.activity));
-    rows+=`<h3 style="color:var(--navy)">${niceDay(d)}</h3>
-    <table style="margin-bottom:12px"><tr><th style="width:90px">Time</th><th>Business</th><th>Address</th></tr>
-    ${stops.length?stops.map(s=>{
+    const d=addDays(wk,i),all=stopsOn(d).filter(s=>!isEvent(s)&&!['Lunch','Admin','Drive Time'].includes(s.activity));
+    const timed=all.filter(s=>s.time),untimed=all.filter(s=>!s.time);
+    const row=s=>{
       const c=s.customerId?custById(s.customerId):null;
-      return `<tr><td>${s.time?fmtTime(s.time):''}</td><td>${esc(s.business)}</td><td>${esc(s.address||(c?c.address:'')||'')}</td></tr>`;}).join('')
-    :'<tr><td colspan="3" class="muted">—</td></tr>'}</table>`;
+      return `<tr><td>${s.time?fmtTime(s.time):''}</td><td>${esc(s.business)}</td><td>${esc(s.address||(c?c.address:'')||'')}</td></tr>`;};
+    rows+=`<h3 style="color:var(--navy)">${niceDay(d)}</h3>`;
+    if(timed.length)rows+=`<table style="margin-bottom:6px"><tr><th style="width:90px">Time</th><th>Business</th><th>Address</th></tr>${timed.map(row).join('')}</table>`;
+    if(untimed.length)rows+=`<div class="small" style="margin:2px 0 4px"><b>Planned stops:</b> ${untimed.map(s=>esc(s.business)).join(' · ')}</div>`;
+    if(!timed.length&&!untimed.length)rows+=`<div class="muted small">—</div>`;
+    rows+=`<div style="margin-bottom:12px"></div>`;
   }
   return `
   <div class="datebar no-print">
@@ -778,7 +795,7 @@ function rBoss(){
   </div>
   <button class="primary no-print" onclick="window.print()" style="margin-bottom:12px">🖨️ Print / Save as PDF</button>
   <div class="card">
-    <h2 style="margin-bottom:2px">Weekly Schedule</h2>
+    <h2 style="margin-bottom:2px">Weekly Overview</h2>
     <div class="muted small" style="margin-bottom:8px">Week of ${parseDate(wk).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})}</div>
     ${rows}
   </div>`;
