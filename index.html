@@ -93,6 +93,19 @@ td{padding:7px 8px;border-bottom:1px solid var(--line)}
 .badge{background:var(--light);color:var(--navy);border-radius:8px;padding:2px 8px;font-size:.72rem;font-weight:700}
 .empty{text-align:center;color:var(--muted);padding:28px 10px;font-size:.9rem}
 .notice{background:var(--yellow);border:1px solid #eadfa8;border-radius:10px;padding:10px;font-size:.85rem;margin-bottom:12px}
+.slot{display:flex;gap:6px;align-items:center;min-height:36px;border-top:1px solid var(--line);padding:2px 4px;cursor:pointer}
+.slot:first-child{border-top:none}
+.slott{min-width:66px;font-size:.74rem;color:var(--muted);font-weight:700}
+.slotc{flex:1;display:flex;flex-wrap:wrap;align-items:center}
+.evt{background:var(--light);color:var(--navy);border:none;border-radius:8px;padding:5px 10px;font-size:.8rem;font-weight:600;margin:2px 6px 2px 0;cursor:pointer;text-align:left}
+.evt.biz{background:#dff3e6;color:#1e7a45}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.chips button{flex:1 1 40%;padding:12px 8px}
+.bizrow{display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:1px solid var(--line)}
+.bizrow:first-of-type{border-top:none}
+.bizrow input[type=checkbox]{width:24px;height:24px;flex:none;accent-color:var(--green)}
+.bizrow.done .bname{text-decoration:line-through;color:var(--muted)}
+.bname{font-weight:700}
 @media print{
   header,nav,.fab,.no-print{display:none!important}
   body{background:#fff;padding:0}
@@ -134,7 +147,8 @@ const fmtTime=t=>{if(!t)return'';let[h,m]=t.split(':').map(Number);const ap=h>=1
 const mapUrl=a=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a);
 const DAY_STATUSES=['Planned','Done','Missed','Rescheduled'];
 const ACT_STATUSES=['Open','In Progress','Done'];
-const ACTIVITIES=['Visit','Cold Call','Follow-Up','Delivery','Admin','Lunch','Drive Time'];
+const ACTIVITIES=['Visit','Cold Call','Follow-Up','Send Proposal','Delivery','Drive Time','Lunch','Admin'];
+const CAL_START=7,CAL_END=17; // calendar grid 7:00 AM - 5:00 PM
 
 /* ============ data ============ */
 function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[]}}
@@ -233,29 +247,52 @@ function render(){
 /* ============ stops shared ============ */
 function stopsOn(date){return live('stops').filter(s=>s.date===date)
   .sort((a,b)=>(a.time||'99')<(b.time||'99')?-1:1);}
-function stopCard(s){
+const isEvent=s=>s.kind==='event';
+function stopAddr(s){const c=s.customerId?custById(s.customerId):null;return s.address||(c?c.address:'')||'';}
+function bizRow(s){
   const c=s.customerId?custById(s.customerId):null;
-  const addr=s.address||(c?c.address:'');
+  const addr=stopAddr(s);
   const bill=(c&&c.billLink)||s.billLink||'';
-  const links=[];
-  if(addr)links.push(`<a href="${esc(mapUrl(addr))}" target="_blank" rel="noopener">🧭 Map</a>`);
-  if(bill)links.push(`<a href="${esc(bill)}" target="_blank" rel="noopener">📄 Bill</a>`);
-  if(c&&c.phone)links.push(`<a href="tel:${esc(c.phone)}">📞 Call</a>`);
-  return `<div class="card stop ${s.unplanned?'unplanned':''}">
-    <div class="row">
-      <div class="time">${s.time?fmtTime(s.time):'—'}</div>
-      <div class="grow">
-        <div class="biz">${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
-        <div class="muted small">${esc(s.activity||'')}${addr?' · '+esc(addr):''}</div>
-      </div>
-      <button class="chip st-${s.status.replace(' ','')}" onclick="cycleStop('${s.id}')">${esc(s.status)}</button>
+  const done=s.status==='Done';
+  return `<div class="bizrow ${done?'done':''}">
+    <input type="checkbox" ${done?'checked':''} onchange="setVisited('${s.id}',this.checked)">
+    <div class="grow" onclick="openStopForm('${s.id}')" style="cursor:pointer">
+      <div class="bname">${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
+      <div class="muted small">${esc(s.activity||'')}${s.time?' · '+fmtTime(s.time):''}${addr?' · '+esc(addr):''}${s.notes?' · '+esc(s.notes):''}</div>
     </div>
-    ${s.notes?`<div class="small" style="margin-top:6px">${esc(s.notes)}</div>`:''}
-    <div class="row" style="margin-top:8px">
-      <div class="links grow">${links.join('')}</div>
-      <button class="ghost" onclick="openStopForm('${s.id}')">Edit</button>
+    <div class="links" style="white-space:nowrap">
+      <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
+      ${addr?`<a href="${esc(mapUrl(addr))}" target="_blank" rel="noopener">🧭</a>`:''}
+      ${bill?`<a href="${esc(bill)}" target="_blank" rel="noopener">📄</a>`:''}
+      ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
     </div>
   </div>`;
+}
+function quickNote(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  openModal(`
+  <h2>${esc(s.business)} — note <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitQuickNote(event,'${id}')">
+    <textarea name="notes" placeholder="POC info, what happened, next steps…" autofocus>${esc(s.notes||'')}</textarea>
+    <button class="primary" type="submit">Save Note</button>
+    <button type="button" class="ghost" style="width:100%;margin-top:8px"
+      onclick="closeModal();actionForStop('${id}')">＋ Turn into action item</button>
+  </form>`);
+}
+function submitQuickNote(e,id){
+  e.preventDefault();
+  const s=db.stops.find(x=>x.id===id);if(!s)return false;
+  s.notes=new FormData(e.target).get('notes').trim();
+  saveRec('stops',s);closeModal();return false;
+}
+function setVisited(id,checked){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  s.status=checked?'Done':'Planned';
+  if(checked&&s.customerId){
+    const c=custById(s.customerId);
+    if(c&&(!c.lastVisit||c.lastVisit<s.date)){c.lastVisit=s.date;c.updatedAt=Date.now();}
+  }
+  saveRec('stops',s);
 }
 function cycleStop(id){
   const s=db.stops.find(x=>x.id===id);if(!s)return;
@@ -268,27 +305,106 @@ function cycleStop(id){
 }
 
 /* ============ TODAY ============ */
+function slotTimes(){
+  const out=[];
+  for(let h=CAL_START;h<CAL_END;h++)for(const m of[0,30])out.push(pad(h)+':'+pad(m));
+  return out;
+}
 function rToday(){
-  const d=state.day,stops=stopsOn(d);
+  const d=state.day,all=stopsOn(d);
+  const bizs=all.filter(s=>!isEvent(s));
+  const visited=bizs.filter(s=>s.status==='Done');
+  const times=slotTimes();
+  const offGrid=all.filter(s=>s.time&&!times.includes(s.time));
   const m=live('mileage').find(x=>x.date===d)||{};
   const miles=(m.startOdo!=null&&m.endOdo!=null&&m.endOdo!=='')?(m.endOdo-m.startOdo):'';
+  const entryHtml=s=>isEvent(s)
+    ?`<button class="evt" onclick="event.stopPropagation();openEventForm('${s.id}')">${esc(s.activity)}${s.notes?' · '+esc(s.notes):''}</button>`
+    :`<button class="evt biz" onclick="event.stopPropagation();openStopForm('${s.id}')">${s.status==='Done'?'✓ ':''}${esc(s.business)}</button>`;
   return `
   <div class="datebar">
     <button onclick="go('today',{day:'${addDays(d,-1)}'})">‹</button>
     <div class="label">${niceDay(d)}${d===todayStr()?'':` <a href="#" class="small" style="color:var(--teal)" onclick="go('today',{day:'${todayStr()}'});return false"> (go to today)</a>`}</div>
     <button onclick="go('today',{day:'${addDays(d,1)}'})">›</button>
   </div>
-  ${stops.length?stops.map(stopCard).join(''):`<div class="empty">No stops planned.<br>Tap ＋ to add one.</div>`}
-  <h3>Mileage — end of day</h3>
+  <div class="card" style="padding:4px 8px">
+    ${times.map(t=>{
+      const here=all.filter(s=>s.time===t);
+      return `<div class="slot" onclick="openSlotMenu('${d}','${t}')">
+        <span class="slott">${fmtTime(t)}</span>
+        <span class="slotc">${here.map(entryHtml).join('')||''}</span>
+      </div>`;}).join('')}
+    ${offGrid.map(s=>`<div class="slot"><span class="slott">${fmtTime(s.time)}</span><span class="slotc">${entryHtml(s)}</span></div>`).join('')}
+  </div>
+  <h3>Businesses — planned & unplanned stops <span class="badge">${visited.length} of ${bizs.length} visited</span></h3>
   <div class="card">
+    ${bizs.length?bizs.map(bizRow).join(''):'<div class="empty">No businesses on the list yet.<br>Tap ＋ to add the places you want to hit today.</div>'}
+  </div>
+  <h3>End of day</h3>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <button class="ghost grow" ${visited.length?'':'disabled style="opacity:.5"'} onclick="openRoute('${d}')">🧭 Open route in Maps (${visited.length} stops)</button>
+      <button class="ghost grow" ${visited.length?'':'disabled style="opacity:.5"'} onclick="fillRouteNotes('${d}')">📝 Log visited as route</button>
+    </div>
     <div class="mileinputs">
       <div><label>Start Odo</label><input type="number" inputmode="decimal" value="${m.startOdo??''}" onchange="setMile('${d}','startOdo',this.value)"></div>
       <div><label>End Odo</label><input type="number" inputmode="decimal" value="${m.endOdo??''}" onchange="setMile('${d}','endOdo',this.value)"></div>
       <div><label>Miles</label><input value="${miles!==''?miles:''}" disabled></div>
     </div>
-    <label>Route / day notes (paste route screenshot link or notes)</label>
-    <input value="${esc(m.notes||'')}" onchange="setMile('${d}','notes',this.value)">
+    <label>Route / day notes</label>
+    <input id="mileNotes" value="${esc(m.notes||'')}" onchange="setMile('${d}','notes',this.value)">
   </div>`;
+}
+function visitedWithAddr(d){
+  return stopsOn(d).filter(s=>!isEvent(s)&&s.status==='Done');
+}
+function openRoute(d){
+  const addrs=visitedWithAddr(d).map(stopAddr).filter(Boolean);
+  if(!addrs.length){alert('No visited stops with addresses yet.');return;}
+  window.open('https://www.google.com/maps/dir/'+addrs.map(encodeURIComponent).join('/'),'_blank');
+}
+function fillRouteNotes(d){
+  const names=visitedWithAddr(d).map(s=>s.business);
+  if(!names.length)return;
+  setMile(d,'notes','Route: '+names.join(' → '));
+}
+/* quick add on a calendar slot */
+function openSlotMenu(date,time){
+  openModal(`
+  <h2>${fmtTime(time)} — quick add <button class="x" onclick="closeModal()">✕</button></h2>
+  <div class="chips">${ACTIVITIES.filter(a=>a!=='Visit').map(a=>
+    `<button class="ghost" onclick="quickEvent('${date}','${time}','${a}')">${a}</button>`).join('')}</div>
+  <label>Optional note (added to whichever you tap)</label>
+  <input id="qnote" placeholder="e.g. call Maria back">
+  <button class="primary" onclick="closeModal();openStopFormAt('${date}','${time}')">🏢 Business stop at this time…</button>`);
+}
+function quickEvent(date,time,act){
+  const note=($('#qnote')?$('#qnote').value.trim():'');
+  saveRec('stops',{id:uid(),kind:'event',date,time,activity:act,notes:note,business:'',address:'',status:'Planned',unplanned:false});
+  closeModal();
+}
+function openStopFormAt(date,time){
+  openStopForm(null,date);
+  const f=document.querySelector('.modal form');
+  if(f)f.time.value=time;
+}
+function openEventForm(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  openModal(`
+  <h2>Edit event <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitEvent(event,'${id}')">
+    <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
+    <label>Time</label><select name="time">${timeOptions(s.time)}</select>
+    <label>Note</label><input name="notes" value="${esc(s.notes||'')}">
+    <button class="primary" type="submit">Save</button>
+    <button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('stops','${id}');closeModal()">Delete</button>
+  </form>`);
+}
+function submitEvent(e,id){
+  e.preventDefault();const f=new FormData(e.target);
+  const s=db.stops.find(x=>x.id===id);if(!s)return false;
+  Object.assign(s,{activity:f.get('activity'),time:f.get('time'),notes:f.get('notes').trim()});
+  saveRec('stops',s);closeModal();return false;
 }
 function setMile(date,field,val){
   let m=db.mileage.find(x=>x.date===date&&!x.deleted);
@@ -318,9 +434,12 @@ function rWeek(){
       <div class="dhead"><b>${niceDay(d)}</b>
         <span><button class="ghost" onclick="openStopForm(null,'${d}')">＋ Add</button>
         <button class="ghost" onclick="go('today',{day:'${d}'})">Open</button></span></div>
-      ${stops.length?stops.map(s=>`<div class="mini"><span class="t">${s.time?fmtTime(s.time):'—'}</span>
-        <span class="grow">${esc(s.business)}</span>
-        <button class="chip st-${s.status.replace(' ','')}" onclick="cycleStop('${s.id}')">${esc(s.status)}</button></div>`).join('')
+      ${stops.length?stops.map(s=>isEvent(s)
+        ?`<div class="mini"><span class="t">${s.time?fmtTime(s.time):'—'}</span>
+          <span class="grow muted">${esc(s.activity)}${s.notes?' · '+esc(s.notes):''}</span></div>`
+        :`<div class="mini"><span class="t">${s.time?fmtTime(s.time):'—'}</span>
+          <span class="grow">${esc(s.business)}</span>
+          <button class="chip st-${s.status.replace(' ','')}" onclick="cycleStop('${s.id}')">${esc(s.status)}</button></div>`).join('')
       :'<div class="muted small">Nothing planned</div>'}
     </div>`;
   }
@@ -340,7 +459,7 @@ function custDatalist(){return `<datalist id="custlist">${live('customers').map(
 function openStopForm(id,date){
   const s=id?db.stops.find(x=>x.id===id):{date:date||state.day,time:'',business:'',address:'',activity:'Visit',status:'Planned',notes:'',unplanned:false};
   openModal(`
-  <h2>${id?'Edit Stop':'Add Stop'} <button class="x" onclick="closeModal()">✕</button></h2>
+  <h2>${id?'Edit Business Stop':'Add Business'} <button class="x" onclick="closeModal()">✕</button></h2>
   <form onsubmit="return submitStop(event,'${id||''}')">
     <label>Date</label><input type="date" name="date" value="${s.date}" required>
     <label>Time</label><select name="time">${timeOptions(s.time)}</select>
@@ -352,9 +471,11 @@ function openStopForm(id,date){
     <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
     <label style="display:flex;align-items:center;gap:8px;text-transform:none">
       <input type="checkbox" name="unplanned" style="width:auto" ${s.unplanned?'checked':''}> Unplanned stop</label>
-    <label>Notes</label><textarea name="notes">${esc(s.notes||'')}</textarea>
-    <button class="primary" type="submit">Save Stop</button>
-    ${id?`<button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('stops','${id}');closeModal()">Delete Stop</button>`:''}
+    <label>Notes (POC info, confirmations, what happened…)</label><textarea name="notes">${esc(s.notes||'')}</textarea>
+    <button class="primary" type="submit">Save</button>
+    ${id?`<button type="button" class="ghost" style="width:100%;margin-top:8px"
+      onclick="closeModal();actionForStop('${id}')">＋ Action item for this business</button>
+    <button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('stops','${id}');closeModal()">Delete Stop</button>`:''}
   </form>`);
 }
 function fillFromCustomer(inp){
@@ -481,9 +602,13 @@ function cycleAction(id){
   a.completed=a.status==='Done'?todayStr():'';
   saveRec('actions',a);
 }
-function openActionForm(id,customerId){
+function actionForStop(stopId){
+  const s=db.stops.find(x=>x.id===stopId);
+  openActionForm(null,null,s?s.business:'');
+}
+function openActionForm(id,customerId,bizName){
   const c=customerId?custById(customerId):null;
-  const a=id?db.actions.find(x=>x.id===id):{business:c?c.name:'',desc:'',priority:'Medium',status:'Open',due:'',notes:''};
+  const a=id?db.actions.find(x=>x.id===id):{business:c?c.name:(bizName||''),desc:'',priority:'Medium',status:'Open',due:'',notes:''};
   openModal(`
   <h2>${id?'Edit Action Item':'Add Action Item'} <button class="x" onclick="closeModal()">✕</button></h2>
   <form onsubmit="return submitAction(event,'${id||''}')">
@@ -521,7 +646,7 @@ function rMore(){
 }
 function weekStats(wk){
   const days=[0,1,2,3,4].map(i=>addDays(wk,i));
-  const stops=live('stops').filter(s=>s.date>=wk&&s.date<=addDays(wk,6));
+  const stops=live('stops').filter(s=>s.date>=wk&&s.date<=addDays(wk,6)&&!isEvent(s));
   const miles=days.map(d=>{const m=live('mileage').find(x=>x.date===d);
     return(m&&m.startOdo!=null&&m.endOdo!=null)?m.endOdo-m.startOdo:0;});
   return{days,stops,miles,
@@ -557,7 +682,7 @@ function rBoss(){
   const wk=state.week;
   let rows='';
   for(let i=0;i<5;i++){
-    const d=addDays(wk,i),stops=stopsOn(d).filter(s=>!['Lunch','Admin','Drive Time'].includes(s.activity));
+    const d=addDays(wk,i),stops=stopsOn(d).filter(s=>!isEvent(s)&&!['Lunch','Admin','Drive Time'].includes(s.activity));
     rows+=`<h3 style="color:var(--navy)">${niceDay(d)}</h3>
     <table style="margin-bottom:12px"><tr><th style="width:90px">Time</th><th>Business</th><th>Address</th></tr>
     ${stops.length?stops.map(s=>{
