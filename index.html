@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#203864">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Field Planner">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<title>Jay's Field Planner</title>
+<style>
+:root{
+  --navy:#203864; --teal:#2e75b6; --light:#ddebf7; --bg:#f4f6f9; --card:#ffffff;
+  --ink:#1a2333; --muted:#67728a; --line:#dfe4ec; --yellow:#fff2cc; --green:#2e9e5b;
+  --red:#c0392b; --orange:#e67e22; --radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{font-size:16px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);
+  padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:20;background:var(--navy);color:#fff;
+  padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
+header h1{font-size:1.05rem;font-weight:700;flex:1}
+#syncBtn{background:rgba(255,255,255,.14);border:none;color:#fff;border-radius:20px;
+  padding:6px 12px;font-size:.8rem;display:flex;align-items:center;gap:6px;cursor:pointer}
+#syncDot{width:9px;height:9px;border-radius:50%;background:#9aa4b8;display:inline-block}
+#syncDot.ok{background:#4cd07d}#syncDot.dirty{background:#f5b942}#syncDot.err{background:#ff6b5e}
+main{padding:14px;max-width:860px;margin:0 auto}
+nav{position:fixed;bottom:0;left:0;right:0;z-index:20;background:var(--card);border-top:1px solid var(--line);
+  display:flex;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:none;padding:8px 2px 6px;font-size:.68rem;color:var(--muted);cursor:pointer}
+nav button .ico{display:block;font-size:1.25rem;margin-bottom:2px}
+nav button.active{color:var(--teal);font-weight:700}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:8px}
+.grow{flex:1;min-width:0}
+h2{font-size:1.05rem;margin:4px 0 10px;color:var(--navy)}
+h3{font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:14px 0 8px}
+.muted{color:var(--muted);font-size:.85rem}
+.small{font-size:.8rem}
+button.primary{background:var(--teal);color:#fff;border:none;border-radius:10px;padding:12px 16px;
+  font-size:1rem;font-weight:600;width:100%;cursor:pointer;margin-top:6px}
+button.ghost{background:none;border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--navy);cursor:pointer;font-size:.85rem}
+button.danger{background:none;border:1px solid var(--red);color:var(--red);border-radius:10px;padding:8px 12px;cursor:pointer;font-size:.85rem}
+.chip{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700;border:none;cursor:pointer}
+.st-Planned{background:var(--light);color:var(--navy)}
+.st-Done{background:#dff3e6;color:var(--green)}
+.st-Missed{background:#fde4e0;color:var(--red)}
+.st-Rescheduled{background:#fdeed8;color:var(--orange)}
+.st-Open{background:#fde4e0;color:var(--red)}
+.st-InProgress{background:#fdeed8;color:var(--orange)}
+.pr-High{color:var(--red);font-weight:700}.pr-Medium{color:var(--orange);font-weight:700}.pr-Low{color:var(--muted)}
+.datebar{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.datebar button{background:var(--card);border:1px solid var(--line);border-radius:10px;width:42px;height:42px;font-size:1.1rem;cursor:pointer;color:var(--navy)}
+.datebar .label{flex:1;text-align:center;font-weight:700;font-size:1rem;color:var(--navy)}
+.stop{border-left:4px solid var(--teal)}
+.stop.unplanned{border-left-color:var(--orange)}
+.stop .time{font-weight:800;color:var(--navy);min-width:70px;font-size:.95rem}
+.stop .biz{font-weight:700;font-size:1rem}
+.links a{color:var(--teal);text-decoration:none;font-size:.82rem;font-weight:600;margin-right:14px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;font-size:1rem;
+  background:#fff;color:var(--ink);font-family:inherit}
+label{display:block;font-size:.78rem;font-weight:700;color:var(--muted);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.03em}
+textarea{min-height:70px}
+.fab{position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:15;width:56px;height:56px;
+  border-radius:50%;background:var(--teal);color:#fff;border:none;font-size:1.8rem;box-shadow:0 4px 14px rgba(32,56,100,.35);cursor:pointer}
+.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:40;display:flex;align-items:flex-end;justify-content:center}
+.modal{background:var(--card);width:100%;max-width:560px;max-height:88vh;overflow-y:auto;
+  border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
+@media(min-width:600px){.modal-bg{align-items:center}.modal{border-radius:18px}}
+.modal h2{display:flex;justify-content:space-between;align-items:center}
+.modal .x{background:none;border:none;font-size:1.5rem;color:var(--muted);cursor:pointer}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;text-align:center}
+.kpi .n{font-size:1.7rem;font-weight:800;color:var(--navy)}
+.kpi .l{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.daycard .dhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.daycard .dhead b{color:var(--navy)}
+.mini{padding:5px 0;border-top:1px dashed var(--line);font-size:.88rem;display:flex;gap:8px;align-items:center}
+.mini .t{color:var(--muted);min-width:62px;font-size:.8rem}
+.searchbar{margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th{background:var(--light);color:var(--navy);text-align:left;padding:7px 8px;font-size:.78rem;text-transform:uppercase}
+td{padding:7px 8px;border-bottom:1px solid var(--line)}
+.morelist{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.morelist button{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 10px;
+  font-size:.9rem;font-weight:600;color:var(--navy);cursor:pointer}
+.morelist button .ico{display:block;font-size:1.5rem;margin-bottom:6px}
+.mileinputs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.badge{background:var(--light);color:var(--navy);border-radius:8px;padding:2px 8px;font-size:.72rem;font-weight:700}
+.empty{text-align:center;color:var(--muted);padding:28px 10px;font-size:.9rem}
+.notice{background:var(--yellow);border:1px solid #eadfa8;border-radius:10px;padding:10px;font-size:.85rem;margin-bottom:12px}
+@media print{
+  header,nav,.fab,.no-print{display:none!important}
+  body{background:#fff;padding:0}
+  main{max-width:none;padding:0}
+  .card{border:none;box-shadow:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="hTitle">Field Planner</h1>
+  <button id="syncBtn" onclick="manualSync()"><span id="syncDot"></span><span id="syncLabel">Sync</span></button>
+</header>
+<main id="view"></main>
+<button class="fab no-print" id="fab" onclick="fabAction()">＋</button>
+<nav class="no-print">
+  <button data-v="today" onclick="go('today')"><span class="ico">📅</span>Today</button>
+  <button data-v="week" onclick="go('week')"><span class="ico">🗓️</span>Week</button>
+  <button data-v="customers" onclick="go('customers')"><span class="ico">👥</span>Customers</button>
+  <button data-v="actions" onclick="go('actions')"><span class="ico">✅</span>Actions</button>
+  <button data-v="more" onclick="go('more')"><span class="ico">☰</span>More</button>
+</nav>
+<div id="modalHost"></div>
+
+<script>
+/* ============ helpers ============ */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
+const pad=n=>String(n).padStart(2,'0');
+const fmtDate=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const todayStr=()=>fmtDate(new Date());
+const addDays=(s,n)=>{const d=parseDate(s);d.setDate(d.getDate()+n);return fmtDate(d);};
+const mondayOf=s=>{const d=parseDate(s);const off=(d.getDay()+6)%7;d.setDate(d.getDate()-off);return fmtDate(d);};
+const niceDay=s=>parseDate(s).toLocaleDateString(undefined,{weekday:'long',month:'numeric',day:'numeric'});
+const shortDay=s=>parseDate(s).toLocaleDateString(undefined,{weekday:'short',month:'numeric',day:'numeric'});
+const fmtTime=t=>{if(!t)return'';let[h,m]=t.split(':').map(Number);const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+pad(m)+' '+ap;};
+const mapUrl=a=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a);
+const DAY_STATUSES=['Planned','Done','Missed','Rescheduled'];
+const ACT_STATUSES=['Open','In Progress','Done'];
+const ACTIVITIES=['Visit','Cold Call','Follow-Up','Delivery','Admin','Lunch','Drive Time'];
+
+/* ============ data ============ */
+function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[]}}
+let db=(()=>{try{const s=localStorage.getItem('fp_data');if(s)return Object.assign(blankDb(),JSON.parse(s));}catch(e){}return blankDb();})();
+let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',actFilter:'Open',custDetail:null};
+function persist(){db.updatedAt=Date.now();localStorage.setItem('fp_data',JSON.stringify(db));}
+function saveRec(coll,rec){rec.updatedAt=Date.now();const list=db[coll];const i=list.findIndex(r=>r.id===rec.id);
+  if(i>=0)list[i]=rec;else list.push(rec);persist();markDirty();render();queueSync();}
+function delRec(coll,id){const r=db[coll].find(r=>r.id===id);if(!r)return;r.deleted=true;r.updatedAt=Date.now();
+  persist();markDirty();render();queueSync();}
+const live=coll=>db[coll].filter(r=>!r.deleted);
+const custById=id=>db.customers.find(c=>c.id===id&&!c.deleted);
+const custByName=n=>live('customers').find(c=>c.name.trim().toLowerCase()===String(n).trim().toLowerCase());
+
+/* ============ sync (GitHub private repo) ============ */
+const GH={repo:localStorage.getItem('fp_repo')||'jaywalker061707/FieldPlanner',path:'data/fieldplanner-data.json'};
+const getToken=()=>localStorage.getItem('fp_token')||'';
+function markDirty(){localStorage.setItem('fp_dirty','1');setSync('dirty','Not synced');}
+function clearDirty(){localStorage.removeItem('fp_dirty');}
+function setSync(cls,label){const d=$('#syncDot');d.className=cls;$('#syncLabel').textContent=label;}
+function ghHeaders(){return{'Authorization':'Bearer '+getToken(),'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};}
+async function ghGetFile(){
+  const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${GH.path}?ref=main&_=${Date.now()}`,{headers:ghHeaders(),cache:'no-store'});
+  if(r.status===404)return null;
+  if(!r.ok)throw new Error('GitHub read failed ('+r.status+')');
+  const j=await r.json();
+  const txt=decodeURIComponent(escape(atob(j.content.replace(/\n/g,''))));
+  return{sha:j.sha,data:JSON.parse(txt)};
+}
+async function ghPutFile(dataStr,sha){
+  const body={message:'Field Planner sync',content:btoa(unescape(encodeURIComponent(dataStr))),branch:'main'};
+  if(sha)body.sha=sha;
+  const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${GH.path}`,
+    {method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('GitHub write failed ('+r.status+')');
+}
+function mergeDb(a,b){
+  const out=blankDb();out.updatedAt=Math.max(a.updatedAt||0,b.updatedAt||0);
+  for(const coll of['customers','stops','actions','mileage']){
+    const map=new Map();
+    for(const r of(a[coll]||[]))map.set(r.id,r);
+    for(const r of(b[coll]||[])){const ex=map.get(r.id);if(!ex||(r.updatedAt||0)>(ex.updatedAt||0))map.set(r.id,r);}
+    out[coll]=[...map.values()];
+  }
+  return out;
+}
+let syncing=false,syncTimer=null;
+function queueSync(){if(!getToken())return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncNow(),4000);}
+async function syncNow(retry){
+  if(!getToken()){setSync('','Set up sync');return;}
+  if(syncing)return;syncing=true;setSync('','Syncing…');
+  try{
+    const remote=await ghGetFile();
+    if(remote){
+      const merged=mergeDb(db,remote.data);
+      db=merged;persist();
+      const localStr=JSON.stringify(db);
+      if(JSON.stringify(remote.data)!==localStr)await ghPutFile(localStr,remote.sha);
+    }else{
+      await ghPutFile(JSON.stringify(db),null);
+    }
+    clearDirty();localStorage.setItem('fp_lastsync',String(Date.now()));
+    setSync('ok','Synced');render();
+  }catch(e){
+    if(!retry&&/40[49]|422/.test(e.message)){syncing=false;return syncNow(true);}
+    setSync('err','Sync error');console.warn(e);
+  }finally{syncing=false;}
+}
+function manualSync(){if(!getToken()){go('settings');return;}syncNow();}
+window.addEventListener('online',()=>{if(localStorage.getItem('fp_dirty'))syncNow();});
+
+/* ============ navigation / render ============ */
+function go(v,opts){state.view=v;Object.assign(state,opts||{});window.scrollTo(0,0);render();}
+function fabAction(){
+  if(state.view==='today')openStopForm(null,state.day);
+  else if(state.view==='week')openStopForm(null,state.week);
+  else if(state.view==='customers')openCustomerForm();
+  else if(state.view==='actions')openActionForm();
+  else openStopForm(null,state.day);
+}
+function render(){
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===state.view||
+    (b.dataset.v==='more'&&['more','dashboard','boss','mileage','settings'].includes(state.view))));
+  const titles={today:"Today",week:"Week",customers:"Customers",actions:"Action Items",more:"More",
+    dashboard:"Dashboard",boss:"Boss PDF",mileage:"Mileage Log",settings:"Settings"};
+  $('#hTitle').textContent="Field Planner — "+(titles[state.view]||'');
+  $('#fab').style.display=['more','dashboard','boss','mileage','settings'].includes(state.view)?'none':'block';
+  const r={today:rToday,week:rWeek,customers:rCustomers,actions:rActions,more:rMore,
+    dashboard:rDashboard,boss:rBoss,mileage:rMileage,settings:rSettings}[state.view]||rToday;
+  $('#view').innerHTML=r();
+  const tok=getToken();
+  if(!tok)setSync('','Set up sync');
+  else if(localStorage.getItem('fp_dirty'))setSync('dirty','Not synced');
+}
+
+/* ============ stops shared ============ */
+function stopsOn(date){return live('stops').filter(s=>s.date===date)
+  .sort((a,b)=>(a.time||'99')<(b.time||'99')?-1:1);}
+function stopCard(s){
+  const c=s.customerId?custById(s.customerId):null;
+  const addr=s.address||(c?c.address:'');
+  const bill=(c&&c.billLink)||s.billLink||'';
+  const links=[];
+  if(addr)links.push(`<a href="${esc(mapUrl(addr))}" target="_blank" rel="noopener">🧭 Map</a>`);
+  if(bill)links.push(`<a href="${esc(bill)}" target="_blank" rel="noopener">📄 Bill</a>`);
+  if(c&&c.phone)links.push(`<a href="tel:${esc(c.phone)}">📞 Call</a>`);
+  return `<div class="card stop ${s.unplanned?'unplanned':''}">
+    <div class="row">
+      <div class="time">${s.time?fmtTime(s.time):'—'}</div>
+      <div class="grow">
+        <div class="biz">${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
+        <div class="muted small">${esc(s.activity||'')}${addr?' · '+esc(addr):''}</div>
+      </div>
+      <button class="chip st-${s.status.replace(' ','')}" onclick="cycleStop('${s.id}')">${esc(s.status)}</button>
+    </div>
+    ${s.notes?`<div class="small" style="margin-top:6px">${esc(s.notes)}</div>`:''}
+    <div class="row" style="margin-top:8px">
+      <div class="links grow">${links.join('')}</div>
+      <button class="ghost" onclick="openStopForm('${s.id}')">Edit</button>
+    </div>
+  </div>`;
+}
+function cycleStop(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  s.status=DAY_STATUSES[(DAY_STATUSES.indexOf(s.status)+1)%DAY_STATUSES.length];
+  if(s.status==='Done'&&s.customerId){
+    const c=custById(s.customerId);
+    if(c&&(!c.lastVisit||c.lastVisit<s.date)){c.lastVisit=s.date;c.updatedAt=Date.now();}
+  }
+  saveRec('stops',s);
+}
+
+/* ============ TODAY ============ */
+function rToday(){
+  const d=state.day,stops=stopsOn(d);
+  const m=live('mileage').find(x=>x.date===d)||{};
+  const miles=(m.startOdo!=null&&m.endOdo!=null&&m.endOdo!=='')?(m.endOdo-m.startOdo):'';
+  return `
+  <div class="datebar">
+    <button onclick="go('today',{day:'${addDays(d,-1)}'})">‹</button>
+    <div class="label">${niceDay(d)}${d===todayStr()?'':` <a href="#" class="small" style="color:var(--teal)" onclick="go('today',{day:'${todayStr()}'});return false"> (go to today)</a>`}</div>
+    <button onclick="go('today',{day:'${addDays(d,1)}'})">›</button>
+  </div>
+  ${stops.length?stops.map(stopCard).join(''):`<div class="empty">No stops planned.<br>Tap ＋ to add one.</div>`}
+  <h3>Mileage — end of day</h3>
+  <div class="card">
+    <div class="mileinputs">
+      <div><label>Start Odo</label><input type="number" inputmode="decimal" value="${m.startOdo??''}" onchange="setMile('${d}','startOdo',this.value)"></div>
+      <div><label>End Odo</label><input type="number" inputmode="decimal" value="${m.endOdo??''}" onchange="setMile('${d}','endOdo',this.value)"></div>
+      <div><label>Miles</label><input value="${miles!==''?miles:''}" disabled></div>
+    </div>
+    <label>Route / day notes (paste route screenshot link or notes)</label>
+    <input value="${esc(m.notes||'')}" onchange="setMile('${d}','notes',this.value)">
+  </div>`;
+}
+function setMile(date,field,val){
+  let m=db.mileage.find(x=>x.date===date&&!x.deleted);
+  if(!m){m={id:uid(),date};db.mileage.push(m);}
+  m[field]=(field==='notes')?val:(val===''?null:Number(val));
+  saveRec('mileage',m);
+}
+
+/* ============ WEEK ============ */
+function rWeek(){
+  const wk=state.week;
+  let out=`
+  <div class="datebar">
+    <button onclick="go('week',{week:'${addDays(wk,-7)}'})">‹</button>
+    <div class="label">Week of ${shortDay(wk)}</div>
+    <button onclick="go('week',{week:'${addDays(wk,7)}'})">›</button>
+  </div>
+  <div class="row no-print" style="margin-bottom:10px">
+    <button class="ghost grow" onclick="go('boss',{week:'${wk}'})">📄 Boss PDF view</button>
+    <button class="ghost grow" onclick="go('dashboard',{week:'${wk}'})">📊 Dashboard</button>
+  </div>`;
+  for(let i=0;i<7;i++){
+    const d=addDays(wk,i);
+    if(i>=5&&!stopsOn(d).length)continue;
+    const stops=stopsOn(d);
+    out+=`<div class="card daycard">
+      <div class="dhead"><b>${niceDay(d)}</b>
+        <span><button class="ghost" onclick="openStopForm(null,'${d}')">＋ Add</button>
+        <button class="ghost" onclick="go('today',{day:'${d}'})">Open</button></span></div>
+      ${stops.length?stops.map(s=>`<div class="mini"><span class="t">${s.time?fmtTime(s.time):'—'}</span>
+        <span class="grow">${esc(s.business)}</span>
+        <button class="chip st-${s.status.replace(' ','')}" onclick="cycleStop('${s.id}')">${esc(s.status)}</button></div>`).join('')
+      :'<div class="muted small">Nothing planned</div>'}
+    </div>`;
+  }
+  return out;
+}
+
+/* ============ stop form ============ */
+function timeOptions(sel){
+  let o='<option value="">— no time —</option>';
+  for(let h=6;h<=19;h++)for(const m of[0,30]){
+    const v=pad(h)+':'+pad(m);
+    o+=`<option value="${v}" ${v===sel?'selected':''}>${fmtTime(v)}</option>`;
+  }
+  return o;
+}
+function custDatalist(){return `<datalist id="custlist">${live('customers').map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>`;}
+function openStopForm(id,date){
+  const s=id?db.stops.find(x=>x.id===id):{date:date||state.day,time:'',business:'',address:'',activity:'Visit',status:'Planned',notes:'',unplanned:false};
+  openModal(`
+  <h2>${id?'Edit Stop':'Add Stop'} <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitStop(event,'${id||''}')">
+    <label>Date</label><input type="date" name="date" value="${s.date}" required>
+    <label>Time</label><select name="time">${timeOptions(s.time)}</select>
+    <label>Business</label><input name="business" list="custlist" value="${esc(s.business)}" required
+      oninput="fillFromCustomer(this)" autocomplete="off">
+    ${custDatalist()}
+    <label>Address</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
+    <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
+    <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none">
+      <input type="checkbox" name="unplanned" style="width:auto" ${s.unplanned?'checked':''}> Unplanned stop</label>
+    <label>Notes</label><textarea name="notes">${esc(s.notes||'')}</textarea>
+    <button class="primary" type="submit">Save Stop</button>
+    ${id?`<button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('stops','${id}');closeModal()">Delete Stop</button>`:''}
+  </form>`);
+}
+function fillFromCustomer(inp){
+  const c=custByName(inp.value);
+  if(c&&!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
+}
+function submitStop(e,id){
+  e.preventDefault();const f=new FormData(e.target);
+  const c=custByName(f.get('business'));
+  const s=id?db.stops.find(x=>x.id===id):{id:uid()};
+  Object.assign(s,{date:f.get('date'),time:f.get('time'),business:f.get('business').trim(),
+    address:f.get('address').trim(),activity:f.get('activity'),status:f.get('status'),
+    notes:f.get('notes').trim(),unplanned:!!f.get('unplanned'),customerId:c?c.id:null});
+  saveRec('stops',s);closeModal();return false;
+}
+
+/* ============ CUSTOMERS ============ */
+function rCustomers(){
+  const q=state.custSearch.toLowerCase();
+  const list=live('customers').filter(c=>!q||[c.name,c.address,c.contact,c.account].join(' ').toLowerCase().includes(q))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+  <div class="searchbar"><input placeholder="Search customers…" value="${esc(state.custSearch)}"
+    oninput="state.custSearch=this.value;render()"></div>
+  ${list.length?list.map(c=>`
+  <div class="card" onclick="openCustomerDetail('${c.id}')" style="cursor:pointer">
+    <div class="row">
+      <div class="grow">
+        <div class="biz" style="font-weight:700">${esc(c.name)}</div>
+        <div class="muted small">${esc(c.address||'')}</div>
+        <div class="muted small">${c.lastVisit?'Last visit '+shortDay(c.lastVisit):'Never visited'}${c.account?' · #'+esc(c.account):''}</div>
+      </div>
+      <div class="links" onclick="event.stopPropagation()">
+        ${c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
+        ${c.address?`<a href="${esc(mapUrl(c.address))}" target="_blank" rel="noopener">🧭</a>`:''}
+      </div>
+    </div>
+  </div>`).join(''):`<div class="empty">No customers yet.<br>Tap ＋ to add your first customer.</div>`}`;
+}
+function openCustomerDetail(id){
+  const c=custById(id);if(!c)return;
+  const visits=live('stops').filter(s=>s.customerId===id&&s.status==='Done')
+    .sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  const acts=live('actions').filter(a=>a.customerId===id&&a.status!=='Done');
+  openModal(`
+  <h2>${esc(c.name)} <button class="x" onclick="closeModal()">✕</button></h2>
+  <div class="links" style="margin-bottom:8px">
+    ${c.phone?`<a href="tel:${esc(c.phone)}">📞 Call</a>`:''}
+    ${c.email?`<a href="mailto:${esc(c.email)}">✉️ Email</a>`:''}
+    ${c.address?`<a href="${esc(mapUrl(c.address))}" target="_blank" rel="noopener">🧭 Map</a>`:''}
+    ${c.billLink?`<a href="${esc(c.billLink)}" target="_blank" rel="noopener">📄 Bill</a>`:''}
+  </div>
+  <div class="muted small">${c.account?'Account #'+esc(c.account)+' · ':''}${esc(c.contact||'')}</div>
+  ${c.notes?`<div class="small" style="margin-top:6px">${esc(c.notes)}</div>`:''}
+  ${acts.length?`<h3>Open action items</h3>${acts.map(a=>`<div class="mini"><span class="grow">${esc(a.desc)}</span><span class="pr-${a.priority}">${a.priority}</span></div>`).join('')}`:''}
+  ${visits.length?`<h3>Recent visits</h3>${visits.map(v=>`<div class="mini"><span class="t">${shortDay(v.date)}</span><span class="grow">${esc(v.notes||v.activity||'')}</span></div>`).join('')}`:''}
+  <div class="row" style="margin-top:14px;gap:8px">
+    <button class="ghost grow" onclick="closeModal();openStopFormForCustomer('${c.id}')">＋ Plan visit</button>
+    <button class="ghost grow" onclick="closeModal();openActionForm(null,'${c.id}')">＋ Action item</button>
+    <button class="ghost grow" onclick="closeModal();openCustomerForm('${c.id}')">Edit</button>
+  </div>`);
+}
+function openStopFormForCustomer(id){
+  const c=custById(id);openStopForm(null,state.day);
+  setTimeout(()=>{const f=document.querySelector('.modal form');if(f){f.business.value=c.name;$('#stopAddr').value=c.address||'';}},0);
+}
+function openCustomerForm(id){
+  const c=id?custById(id):{name:'',account:'',address:'',contact:'',phone:'',email:'',billLink:'',lastVisit:'',notes:''};
+  openModal(`
+  <h2>${id?'Edit Customer':'Add Customer'} <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitCustomer(event,'${id||''}')">
+    <label>Business name</label><input name="name" value="${esc(c.name)}" required>
+    <label>Account #</label><input name="account" value="${esc(c.account||'')}">
+    <label>Address</label><input name="address" value="${esc(c.address||'')}">
+    <label>Primary contact</label><input name="contact" value="${esc(c.contact||'')}">
+    <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
+    <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
+    <label>Bill link</label><input name="billLink" value="${esc(c.billLink||'')}" placeholder="https://…">
+    <label>Last visit</label><input name="lastVisit" type="date" value="${esc(c.lastVisit||'')}">
+    <label>Notes</label><textarea name="notes">${esc(c.notes||'')}</textarea>
+    <button class="primary" type="submit">Save Customer</button>
+    ${id?`<button type="button" class="danger" style="width:100%;margin-top:8px" onclick="if(confirm('Delete this customer?')){delRec('customers','${id}');closeModal()}">Delete Customer</button>`:''}
+  </form>`);
+}
+function submitCustomer(e,id){
+  e.preventDefault();const f=new FormData(e.target);
+  const c=id?custById(id):{id:uid()};
+  for(const k of['name','account','address','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
+  saveRec('customers',c);closeModal();return false;
+}
+
+/* ============ ACTIONS ============ */
+function rActions(){
+  let list=live('actions');
+  if(state.actFilter==='Open')list=list.filter(a=>a.status!=='Done');
+  if(state.actFilter==='Done')list=list.filter(a=>a.status==='Done');
+  const pri={High:0,Medium:1,Low:2};
+  list.sort((a,b)=>(pri[a.priority]-pri[b.priority])||String(a.due||'9999').localeCompare(String(b.due||'9999')));
+  const today=todayStr();
+  return `
+  <div class="row" style="margin-bottom:10px">
+    ${['Open','All','Done'].map(f=>`<button class="ghost grow" style="${state.actFilter===f?'background:var(--light);border-color:var(--teal)':''}"
+      onclick="state.actFilter='${f}';render()">${f}</button>`).join('')}
+  </div>
+  ${list.length?list.map(a=>{
+    const overdue=a.due&&a.due<today&&a.status!=='Done';
+    return `<div class="card">
+    <div class="row">
+      <div class="grow">
+        <div style="font-weight:700">${esc(a.desc)}</div>
+        <div class="muted small">${esc(a.business||'')}${a.due?` · Due <span style="${overdue?'color:var(--red);font-weight:700':''}">${shortDay(a.due)}</span>`:''}
+          · <span class="pr-${a.priority}">${a.priority}</span></div>
+      </div>
+      <button class="chip st-${a.status.replace(' ','')}" onclick="cycleAction('${a.id}')">${esc(a.status)}</button>
+    </div>
+    ${a.notes?`<div class="small" style="margin-top:6px">${esc(a.notes)}</div>`:''}
+    <div class="row" style="margin-top:6px"><div class="grow"></div>
+      <button class="ghost" onclick="openActionForm('${a.id}')">Edit</button></div>
+  </div>`;}).join(''):`<div class="empty">No ${state.actFilter==='All'?'':state.actFilter.toLowerCase()+' '}action items.</div>`}`;
+}
+function cycleAction(id){
+  const a=db.actions.find(x=>x.id===id);if(!a)return;
+  a.status=ACT_STATUSES[(ACT_STATUSES.indexOf(a.status)+1)%ACT_STATUSES.length];
+  a.completed=a.status==='Done'?todayStr():'';
+  saveRec('actions',a);
+}
+function openActionForm(id,customerId){
+  const c=customerId?custById(customerId):null;
+  const a=id?db.actions.find(x=>x.id===id):{business:c?c.name:'',desc:'',priority:'Medium',status:'Open',due:'',notes:''};
+  openModal(`
+  <h2>${id?'Edit Action Item':'Add Action Item'} <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitAction(event,'${id||''}')">
+    <label>Business</label><input name="business" list="custlist" value="${esc(a.business||'')}">${custDatalist()}
+    <label>Action item</label><input name="desc" value="${esc(a.desc)}" required>
+    <label>Priority</label><select name="priority">${['High','Medium','Low'].map(p=>`<option ${p===a.priority?'selected':''}>${p}</option>`).join('')}</select>
+    <label>Status</label><select name="status">${ACT_STATUSES.map(p=>`<option ${p===a.status?'selected':''}>${p}</option>`).join('')}</select>
+    <label>Due date</label><input name="due" type="date" value="${esc(a.due||'')}">
+    <label>Notes</label><textarea name="notes">${esc(a.notes||'')}</textarea>
+    <button class="primary" type="submit">Save Action Item</button>
+    ${id?`<button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('actions','${id}');closeModal()">Delete</button>`:''}
+  </form>`);
+}
+function submitAction(e,id){
+  e.preventDefault();const f=new FormData(e.target);
+  const c=custByName(f.get('business'));
+  const a=id?db.actions.find(x=>x.id===id):{id:uid()};
+  Object.assign(a,{business:String(f.get('business')||'').trim(),desc:f.get('desc').trim(),
+    priority:f.get('priority'),status:f.get('status'),due:f.get('due'),notes:f.get('notes').trim(),
+    customerId:c?c.id:null,completed:f.get('status')==='Done'?(a.completed||todayStr()):''});
+  saveRec('actions',a);closeModal();return false;
+}
+
+/* ============ MORE / DASHBOARD / BOSS / MILEAGE / SETTINGS ============ */
+function rMore(){
+  return `<div class="morelist">
+    <button onclick="go('dashboard')"><span class="ico">📊</span>Dashboard</button>
+    <button onclick="go('boss')"><span class="ico">📄</span>Boss PDF</button>
+    <button onclick="go('mileage')"><span class="ico">🚗</span>Mileage Log</button>
+    <button onclick="go('settings')"><span class="ico">⚙️</span>Settings & Sync</button>
+  </div>
+  <h3>About</h3>
+  <div class="card small muted">Jay's Field Planner — your customers, week plan, action items, and mileage in one place.
+  Works offline; syncs across your devices through your private GitHub repo. Data never goes anywhere else.</div>`;
+}
+function weekStats(wk){
+  const days=[0,1,2,3,4].map(i=>addDays(wk,i));
+  const stops=live('stops').filter(s=>s.date>=wk&&s.date<=addDays(wk,6));
+  const miles=days.map(d=>{const m=live('mileage').find(x=>x.date===d);
+    return(m&&m.startOdo!=null&&m.endOdo!=null)?m.endOdo-m.startOdo:0;});
+  return{days,stops,miles,
+    planned:stops.length,done:stops.filter(s=>s.status==='Done').length,
+    unplanned:stops.filter(s=>s.unplanned).length,
+    openActs:live('actions').filter(a=>a.status!=='Done').length,
+    totMiles:miles.reduce((a,b)=>a+b,0)};
+}
+function rDashboard(){
+  const wk=state.week,st=weekStats(wk);
+  return `
+  <div class="datebar">
+    <button onclick="go('dashboard',{week:'${addDays(wk,-7)}'})">‹</button>
+    <div class="label">Week of ${shortDay(wk)}</div>
+    <button onclick="go('dashboard',{week:'${addDays(wk,7)}'})">›</button>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="n">${st.planned}</div><div class="l">Stops planned</div></div>
+    <div class="kpi"><div class="n">${st.done}</div><div class="l">Stops done</div></div>
+    <div class="kpi"><div class="n">${st.unplanned}</div><div class="l">Unplanned</div></div>
+    <div class="kpi"><div class="n">${st.openActs}</div><div class="l">Open actions</div></div>
+    <div class="kpi"><div class="n">${st.totMiles}</div><div class="l">Miles</div></div>
+  </div>
+  <h3>Daily mileage</h3>
+  <div class="card"><table><tr><th>Day</th><th>Miles</th></tr>
+    ${st.days.map((d,i)=>`<tr><td>${shortDay(d)}</td><td>${st.miles[i]||''}</td></tr>`).join('')}
+    <tr><td><b>Total</b></td><td><b>${st.totMiles}</b></td></tr></table></div>
+  <h3>Open action items</h3>
+  ${live('actions').filter(a=>a.status!=='Done').slice(0,8).map(a=>
+    `<div class="mini"><span class="grow">${esc(a.desc)}</span><span class="pr-${a.priority} small">${a.priority}</span></div>`).join('')||'<div class="muted small">None 🎉</div>'}`;
+}
+function rBoss(){
+  const wk=state.week;
+  let rows='';
+  for(let i=0;i<5;i++){
+    const d=addDays(wk,i),stops=stopsOn(d).filter(s=>!['Lunch','Admin','Drive Time'].includes(s.activity));
+    rows+=`<h3 style="color:var(--navy)">${niceDay(d)}</h3>
+    <table style="margin-bottom:12px"><tr><th style="width:90px">Time</th><th>Business</th><th>Address</th></tr>
+    ${stops.length?stops.map(s=>{
+      const c=s.customerId?custById(s.customerId):null;
+      return `<tr><td>${s.time?fmtTime(s.time):''}</td><td>${esc(s.business)}</td><td>${esc(s.address||(c?c.address:'')||'')}</td></tr>`;}).join('')
+    :'<tr><td colspan="3" class="muted">—</td></tr>'}</table>`;
+  }
+  return `
+  <div class="datebar no-print">
+    <button onclick="go('boss',{week:'${addDays(wk,-7)}'})">‹</button>
+    <div class="label">Week of ${shortDay(wk)}</div>
+    <button onclick="go('boss',{week:'${addDays(wk,7)}'})">›</button>
+  </div>
+  <button class="primary no-print" onclick="window.print()" style="margin-bottom:12px">🖨️ Print / Save as PDF</button>
+  <div class="card">
+    <h2 style="margin-bottom:2px">Weekly Schedule</h2>
+    <div class="muted small" style="margin-bottom:8px">Week of ${parseDate(wk).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})}</div>
+    ${rows}
+  </div>`;
+}
+function rMileage(){
+  const list=live('mileage').filter(m=>m.startOdo!=null||m.endOdo!=null||m.notes)
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  return `<div class="card"><table><tr><th>Date</th><th>Miles</th><th>Notes</th></tr>
+    ${list.map(m=>`<tr><td>${shortDay(m.date)}</td>
+      <td>${(m.startOdo!=null&&m.endOdo!=null)?m.endOdo-m.startOdo:''}</td>
+      <td class="small">${esc(m.notes||'')}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">No entries yet — add mileage on the Today screen.</td></tr>'}
+  </table></div>`;
+}
+function rSettings(){
+  const tok=getToken();
+  const last=localStorage.getItem('fp_lastsync');
+  return `
+  ${!tok?`<div class="notice"><b>Set up sync (one time per device)</b><br>
+  Syncing keeps your phone, tablet, and laptop identical. Your data is stored in your private GitHub repo — nowhere else.</div>`:''}
+  <h3>Sync</h3>
+  <div class="card">
+    <div class="small" style="margin-bottom:8px">Status: <b>${tok?(localStorage.getItem('fp_dirty')?'Changes not yet synced':'Connected'):'Not connected'}</b>
+    ${last?`<span class="muted"> · last sync ${new Date(+last).toLocaleString()}</span>`:''}</div>
+    <label>GitHub token</label>
+    <input id="tokIn" type="password" placeholder="${tok?'••••••••  (saved)':'Paste your token here'}">
+    <button class="primary" onclick="saveToken()">Save & Sync Now</button>
+    ${tok?`<button class="danger" style="width:100%;margin-top:8px" onclick="localStorage.removeItem('fp_token');render()">Disconnect this device</button>`:''}
+    <div class="small muted" style="margin-top:10px">
+      <b>How to get a token</b> (once — then paste it on each device):<br>
+      1. On a computer, go to <b>github.com/settings/personal-access-tokens/new</b><br>
+      2. Name: <i>Field Planner</i> · Expiration: <i>1 year</i><br>
+      3. Repository access: <b>Only select repositories → FieldPlanner</b><br>
+      4. Permissions → Repository permissions → <b>Contents: Read and write</b><br>
+      5. Generate, copy the token, paste above on each device.
+    </div>
+  </div>
+  <h3>Backup</h3>
+  <div class="card">
+    <div class="row">
+      <button class="ghost grow" onclick="exportData()">⬇️ Export backup file</button>
+      <button class="ghost grow" onclick="document.getElementById('impFile').click()">⬆️ Import backup</button>
+    </div>
+    <input type="file" id="impFile" accept=".json" style="display:none" onchange="importData(this)">
+  </div>
+  <h3>Danger zone</h3>
+  <div class="card"><button class="danger" onclick="wipe()">Erase all data on this device</button></div>`;
+}
+function saveToken(){
+  const v=$('#tokIn').value.trim();
+  if(v)localStorage.setItem('fp_token',v);
+  if(!getToken()){alert('Paste a token first.');return;}
+  syncNow();render();
+}
+function exportData(){
+  const blob=new Blob([JSON.stringify(db,null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='fieldplanner-backup-'+todayStr()+'.json';a.click();
+}
+function importData(inp){
+  const f=inp.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{
+    const d=JSON.parse(r.result);
+    if(!d.customers)throw new Error('bad file');
+    if(confirm('Merge this backup into your current data?')){db=mergeDb(db,d);persist();markDirty();render();queueSync();}
+  }catch(e){alert('Could not read that backup file.');}};
+  r.readAsText(f);
+}
+function wipe(){
+  if(confirm('Erase ALL Field Planner data on THIS device? (Synced copies on GitHub/other devices are not touched.)')){
+    localStorage.removeItem('fp_data');localStorage.removeItem('fp_dirty');db=blankDb();render();
+  }
+}
+
+/* ============ modal ============ */
+function openModal(html){$('#modalHost').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`;}
+function closeModal(){$('#modalHost').innerHTML='';}
+
+/* ============ boot ============ */
+render();
+if(getToken()&&navigator.onLine)syncNow();
+if('serviceWorker'in navigator&&location.protocol.startsWith('http')){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>
