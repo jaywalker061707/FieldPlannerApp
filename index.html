@@ -147,13 +147,20 @@ const fmtTime=t=>{if(!t)return'';let[h,m]=t.split(':').map(Number);const ap=h>=1
 const mapUrl=a=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a);
 const DAY_STATUSES=['Planned','Done','Missed','Rescheduled'];
 const ACT_STATUSES=['Open','In Progress','Done'];
-const ACTIVITIES=['Visit','Cold Call','Follow-Up','Send Proposal','Delivery','Drive Time','Lunch','Admin'];
+const ACTIVITIES=['Visit','Cold Call','Door Knocking','Follow-Up','Send Proposal','Delivery','Drive Time','Lunch','Admin'];
 const CAL_START=7,CAL_END=17; // calendar grid 7:00 AM - 5:00 PM
 
 /* ============ data ============ */
-function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[]}}
+function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[],days:[]}}
 let db=(()=>{try{const s=localStorage.getItem('fp_data');if(s)return Object.assign(blankDb(),JSON.parse(s));}catch(e){}return blankDb();})();
-let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',actFilter:'Open',custDetail:null};
+let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',custTown:'',custSort:'name',actFilter:'Open',custDetail:null};
+/* day titles ("Lewistown", "Home day") */
+function dayTitle(d){const r=live('days').find(x=>x.date===d);return r?(r.title||''):'';}
+function setDayTitle(d,v){
+  let r=db.days.find(x=>x.date===d&&!x.deleted);
+  if(!r){r={id:uid(),date:d,title:''};db.days.push(r);}
+  r.title=v.trim();saveRec('days',r);
+}
 function persist(){db.updatedAt=Date.now();localStorage.setItem('fp_data',JSON.stringify(db));}
 function saveRec(coll,rec){rec.updatedAt=Date.now();const list=db[coll];const i=list.findIndex(r=>r.id===rec.id);
   if(i>=0)list[i]=rec;else list.push(rec);persist();markDirty();render();queueSync();}
@@ -187,7 +194,7 @@ async function ghPutFile(dataStr,sha){
 }
 function mergeDb(a,b){
   const out=blankDb();out.updatedAt=Math.max(a.updatedAt||0,b.updatedAt||0);
-  for(const coll of['customers','stops','actions','mileage']){
+  for(const coll of['customers','stops','actions','mileage','days']){
     const map=new Map();
     for(const r of(a[coll]||[]))map.set(r.id,r);
     for(const r of(b[coll]||[])){const ex=map.get(r.id);if(!ex||(r.updatedAt||0)>(ex.updatedAt||0))map.set(r.id,r);}
@@ -283,7 +290,7 @@ async function viewBill(custId){
 window.addEventListener('online',()=>{if(localStorage.getItem('fp_dirty'))syncNow();});
 
 /* ============ navigation / render ============ */
-function go(v,opts){state.view=v;Object.assign(state,opts||{});window.scrollTo(0,0);render();}
+function go(v,opts){if(v!=='customers')selCust.clear();state.view=v;Object.assign(state,opts||{});window.scrollTo(0,0);render();}
 function fabAction(){
   if(state.view==='today')openStopForm(null,state.day);
   else if(state.view==='week')openStopForm(null,state.week);
@@ -388,6 +395,9 @@ function rToday(){
     <div class="label">${niceDay(d)}${d===todayStr()?'':` <a href="#" class="small" style="color:var(--teal)" onclick="go('today',{day:'${todayStr()}'});return false"> (go to today)</a>`}</div>
     <button onclick="go('today',{day:'${addDays(d,1)}'})">›</button>
   </div>
+  <input value="${esc(dayTitle(d))}" placeholder="Day title — e.g. Lewistown, Home day"
+    onchange="setDayTitle('${d}',this.value)"
+    style="margin-bottom:10px;text-align:center;font-weight:700;color:var(--navy)">
   <div class="card" style="padding:4px 8px">
     ${times.map(t=>{
       const here=all.filter(s=>s.time===t);
@@ -492,7 +502,7 @@ function rWeek(){
     if(i>=5&&!stopsOn(d).length)continue;
     const stops=stopsOn(d);
     out+=`<div class="card daycard">
-      <div class="dhead"><b>${niceDay(d)}</b>
+      <div class="dhead"><b>${niceDay(d)}${dayTitle(d)?' — '+esc(dayTitle(d)):''}</b>
         <span><button class="ghost" onclick="openStopForm(null,'${d}')">＋ Add</button>
         <button class="ghost" onclick="go('today',{day:'${d}'})">Open</button></span></div>
       ${stops.length?stops.map(s=>isEvent(s)
@@ -529,6 +539,7 @@ function openStopForm(id,date){
       oninput="fillFromCustomer(this)" autocomplete="off">
     ${custDatalist()}
     <label>Address (optional — Maps finds most places by name)</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
+    <label>Account #</label><input name="account" id="stopAcct" value="${esc(c?c.account:'')}">
     <label>POC name</label><input name="pocName" id="stopPocName" value="${esc(c?c.contact:'')}">
     <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
     <label>POC email</label><input name="pocEmail" id="stopPocEmail" type="email" value="${esc(c?c.email:'')}">
@@ -549,6 +560,7 @@ function fillFromCustomer(inp){
   const c=custByName(inp.value);
   if(!c)return;
   if(!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
+  if(!$('#stopAcct').value)$('#stopAcct').value=c.account||'';
   if(!$('#stopPocName').value)$('#stopPocName').value=c.contact||'';
   if(!$('#stopPocPhone').value)$('#stopPocPhone').value=c.phone||'';
   if(!$('#stopPocEmail').value)$('#stopPocEmail').value=c.email||'';
@@ -556,14 +568,16 @@ function fillFromCustomer(inp){
 function upsertCustomerFromStop(f,s){
   let c=custByName(s.business);
   const poc={contact:String(f.get('pocName')||'').trim(),phone:String(f.get('pocPhone')||'').trim(),email:String(f.get('pocEmail')||'').trim()};
+  const acct=String(f.get('account')||'').trim();
   if(!c){
-    c={id:uid(),name:s.business,account:'',address:s.address||'',contact:poc.contact,phone:poc.phone,
+    c={id:uid(),name:s.business,account:acct,address:s.address||'',town:'',contact:poc.contact,phone:poc.phone,
        email:poc.email,billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()};
     db.customers.push(c);
   }else{
     if(poc.contact)c.contact=poc.contact;
     if(poc.phone)c.phone=poc.phone;
     if(poc.email)c.email=poc.email;
+    if(acct)c.account=acct;
     if(s.address&&!c.address)c.address=s.address;
     c.updatedAt=Date.now();
   }
@@ -583,27 +597,131 @@ function submitStop(e,id){
 }
 
 /* ============ CUSTOMERS ============ */
+const selCust=new Set();
 function rCustomers(){
   const q=state.custSearch.toLowerCase();
-  const list=live('customers').filter(c=>!q||[c.name,c.address,c.contact,c.account].join(' ').toLowerCase().includes(q))
-    .sort((a,b)=>a.name.localeCompare(b.name));
+  const towns=[...new Set(live('customers').map(c=>(c.town||'').trim()).filter(Boolean))].sort();
+  let list=live('customers').filter(c=>!q||[c.name,c.address,c.town,c.contact,c.account].join(' ').toLowerCase().includes(q));
+  if(state.custTown)list=list.filter(c=>(c.town||'').trim().toLowerCase()===state.custTown.toLowerCase());
+  if(state.custSort==='visit')list.sort((a,b)=>String(a.lastVisit||'').localeCompare(String(b.lastVisit||''))||a.name.localeCompare(b.name));
+  else if(state.custSort==='town')list.sort((a,b)=>String(a.town||'').localeCompare(String(b.town||''))||a.name.localeCompare(b.name));
+  else list.sort((a,b)=>a.name.localeCompare(b.name));
   return `
-  <div class="searchbar"><input placeholder="Search customers…" value="${esc(state.custSearch)}"
-    oninput="state.custSearch=this.value;render()"></div>
+  <div class="row searchbar">
+    <input class="grow" placeholder="Search customers…" value="${esc(state.custSearch)}"
+      oninput="state.custSearch=this.value;render()">
+    <button class="ghost" style="flex:none" onclick="openImport()">⬆ Import</button>
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <select class="grow" onchange="state.custTown=this.value;render()">
+      <option value="">All towns</option>
+      ${towns.map(t=>`<option value="${esc(t)}" ${state.custTown===t?'selected':''}>${esc(t)}</option>`).join('')}
+    </select>
+    <select class="grow" onchange="state.custSort=this.value;render()">
+      <option value="name" ${state.custSort==='name'?'selected':''}>Sort: Name</option>
+      <option value="visit" ${state.custSort==='visit'?'selected':''}>Sort: Longest since visit</option>
+      <option value="town" ${state.custSort==='town'?'selected':''}>Sort: Town</option>
+    </select>
+  </div>
+  ${selCust.size?`<div class="card" style="position:sticky;top:54px;z-index:10;border-color:var(--teal)">
+    <div class="row" style="flex-wrap:wrap">
+      <b class="grow">${selCust.size} selected</b>
+      <button class="ghost" onclick="openAddToDay()">＋ Add to a day</button>
+      <button class="ghost" onclick="emailSelected()">✉ Email</button>
+      <button class="ghost" onclick="copySelectedEmails()">Copy emails</button>
+      <button class="ghost" onclick="selCust.clear();render()">✕</button>
+    </div></div>`:''}
   ${list.length?list.map(c=>`
-  <div class="card" onclick="openCustomerDetail('${c.id}')" style="cursor:pointer">
+  <div class="card" style="padding:10px 12px">
     <div class="row">
-      <div class="grow">
+      <input type="checkbox" style="width:22px;height:22px;flex:none;accent-color:var(--teal)"
+        ${selCust.has(c.id)?'checked':''} onchange="toggleSel('${c.id}',this.checked)">
+      <div class="grow" onclick="openCustomerDetail('${c.id}')" style="cursor:pointer">
         <div class="biz" style="font-weight:700">${esc(c.name)}</div>
-        <div class="muted small">${esc(c.address||'')}</div>
+        <div class="muted small">${c.town?esc(c.town)+' · ':''}${esc(c.address||'')}</div>
         <div class="muted small">${c.lastVisit?'Last visit '+shortDay(c.lastVisit):'Never visited'}${c.account?' · #'+esc(c.account):''}</div>
       </div>
-      <div class="links" onclick="event.stopPropagation()">
+      <div class="links" onclick="event.stopPropagation()" style="white-space:nowrap">
+        ${(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
         ${c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
         <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭</a>
       </div>
     </div>
-  </div>`).join(''):`<div class="empty">No customers yet.<br>Tap ＋ to add your first customer.</div>`}`;
+  </div>`).join(''):`<div class="empty">${q||state.custTown?'No customers match that search/filter.':'No customers yet.<br>Tap ＋ to add one, or ⬆ Import a list.'}</div>`}`;
+}
+function toggleSel(id,on){if(on)selCust.add(id);else selCust.delete(id);render();}
+function openAddToDay(){
+  openModal(`
+  <h2>Add ${selCust.size} business${selCust.size===1?'':'es'} to a day <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitAddToDay(event)">
+    <label>Which day?</label><input type="date" name="date" value="${todayStr()}" required>
+    <button class="primary" type="submit">Add to plan</button>
+  </form>`);
+}
+function submitAddToDay(e){
+  e.preventDefault();
+  const date=new FormData(e.target).get('date');
+  let n=0;
+  for(const id of selCust){
+    const c=custById(id);if(!c)continue;
+    if(live('stops').some(s=>s.date===date&&s.customerId===id))continue;
+    db.stops.push({id:uid(),date,time:'',business:c.name,address:c.address||'',activity:'Visit',
+      status:'Planned',notes:'',unplanned:false,customerId:id,updatedAt:Date.now()});
+    n++;
+  }
+  persist();markDirty();queueSync();selCust.clear();closeModal();
+  go('today',{day:date});
+  return false;
+}
+function selectedEmails(){
+  const out=[];
+  for(const id of selCust){const c=custById(id);if(c&&c.email)out.push(c.email);}
+  return out;
+}
+function emailSelected(){
+  const em=selectedEmails();
+  if(!em.length){alert('None of the selected customers have an email address on file.');return;}
+  const skipped=selCust.size-em.length;
+  if(skipped&&!confirm(skipped+' of the selected customers have no email and will be skipped. Continue?'))return;
+  location.href=em.length===1
+    ?'mailto:'+encodeURIComponent(em[0])
+    :'mailto:?bcc='+em.map(encodeURIComponent).join(',');
+}
+function copySelectedEmails(){
+  const em=selectedEmails();
+  if(!em.length){alert('No email addresses in the selection.');return;}
+  const txt=em.join('; ');
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(()=>alert(em.length+' address(es) copied — paste into the BCC field.'),()=>prompt('Copy these:',txt));
+  else prompt('Copy these:',txt);
+}
+function openImport(){
+  openModal(`
+  <h2>Import customers <button class="x" onclick="closeModal()">✕</button></h2>
+  <div class="small muted" style="margin-bottom:6px">
+    One business per line. Just a name works, or add details separated by <b>semicolons</b>
+    (or paste columns straight from a spreadsheet) in this order:<br>
+    <b>Name; Account #; Address; Town; Contact; Phone; Email</b><br><br>
+    Businesses already in your list (same name) are skipped, so importing twice won't create duplicates.
+  </div>
+  <textarea id="impIn" style="min-height:170px" placeholder="Tony's Pizza; 884412; 123 Main St; Lewistown; Maria; 717-555-0140; maria@tonys.com
+Joe's Autobody
+Corner Deli; ; 500 Market St; Lewistown"></textarea>
+  <button class="primary" onclick="runImport()">Import</button>`);
+}
+function runImport(){
+  const lines=$('#impIn').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  let added=0,skipped=0;
+  for(const line of lines){
+    const parts=(line.includes('\t')?line.split('\t'):line.split(';')).map(p=>p.trim());
+    const [name,account,address,town,contact,phone,email]=parts;
+    if(!name||custByName(name)){skipped++;continue;}
+    db.customers.push({id:uid(),name,account:account||'',address:address||'',town:town||'',
+      contact:contact||'',phone:phone||'',email:email||'',billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()});
+    added++;
+  }
+  persist();markDirty();queueSync();closeModal();render();
+  alert(added+' added'+(skipped?' · '+skipped+' skipped (blank or already in your list)':''));
 }
 function openCustomerDetail(id){
   const c=custById(id);if(!c)return;
@@ -640,6 +758,7 @@ function openCustomerForm(id){
     <label>Business name</label><input name="name" value="${esc(c.name)}" required>
     <label>Account #</label><input name="account" value="${esc(c.account||'')}">
     <label>Address (optional — Maps finds most places by name)</label><input name="address" value="${esc(c.address||'')}">
+    <label>Town / Area (for filtering)</label><input name="town" value="${esc(c.town||'')}">
     <label>Primary contact</label><input name="contact" value="${esc(c.contact||'')}">
     <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
@@ -655,7 +774,7 @@ function openCustomerForm(id){
 function submitCustomer(e,id){
   e.preventDefault();const f=new FormData(e.target);
   const c=id?custById(id):{id:uid()};
-  for(const k of['name','account','address','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
+  for(const k of['name','account','address','town','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
   const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
   if(bf)uploadBillPhoto(bf,c).catch(()=>alert('Bill photo upload failed — check your signal and try again.'));
   saveRec('customers',c);closeModal();return false;
@@ -781,7 +900,7 @@ function rBoss(){
     const row=s=>{
       const c=s.customerId?custById(s.customerId):null;
       return `<tr><td>${s.time?fmtTime(s.time):''}</td><td>${esc(s.business)}</td><td>${esc(s.address||(c?c.address:'')||'')}</td></tr>`;};
-    rows+=`<h3 style="color:var(--navy)">${niceDay(d)}</h3>`;
+    rows+=`<h3 style="color:var(--navy)">${niceDay(d)}${dayTitle(d)?' — '+esc(dayTitle(d)):''}</h3>`;
     if(timed.length)rows+=`<table style="margin-bottom:6px"><tr><th style="width:90px">Time</th><th>Business</th><th>Address</th></tr>${timed.map(row).join('')}</table>`;
     if(untimed.length)rows+=`<div class="small" style="margin:2px 0 4px"><b>Planned stops:</b> ${untimed.map(s=>esc(s.business)).join(' · ')}</div>`;
     if(!timed.length&&!untimed.length)rows+=`<div class="muted small">—</div>`;
