@@ -408,7 +408,10 @@ function rToday(){
       </div>`;}).join('')}
     ${offGrid.map(s=>`<div class="slot"><span class="slott">${fmtTime(s.time)}</span><span class="slotc">${entryHtml(s)}</span></div>`).join('')}
   </div>
-  <h3>Businesses — planned & unplanned stops <span class="badge">${visited.length} of ${bizs.length} visited</span></h3>
+  <div class="row">
+    <h3 class="grow">Businesses <span class="badge">${visited.length} of ${bizs.length} visited</span></h3>
+    ${bizs.length?`<button class="ghost" style="flex:none" onclick="openDayEmail('${d}')">✉ Email</button>`:''}
+  </div>
   <div class="card">
     ${bizs.length?bizs.map(bizRow).join(''):'<div class="empty">No businesses on the list yet.<br>Tap ＋ to add the places you want to hit today.</div>'}
   </div>
@@ -440,6 +443,35 @@ function fillRouteNotes(d){
   if(!names.length)return;
   setMile(d,'notes','Route: '+names.join(' → '));
 }
+/* email the day's businesses */
+function emailTo(em){
+  if(!em.length){alert('Nobody with an email address is selected.');return;}
+  location.href=em.length===1
+    ?'mailto:'+encodeURIComponent(em[0])
+    :'mailto:?bcc='+em.map(encodeURIComponent).join(',');
+}
+function copyEmails(em){
+  if(!em.length){alert('No email addresses selected.');return;}
+  const txt=em.join('; ');
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(()=>alert(em.length+' address(es) copied — paste into the BCC field.'),()=>prompt('Copy these:',txt));
+  else prompt('Copy these:',txt);
+}
+function openDayEmail(d){
+  const items=stopsOn(d).filter(s=>!isEvent(s)).map(s=>{
+    const c=s.customerId?custById(s.customerId):null;
+    return{name:s.business,email:(c&&c.email)||''};});
+  if(!items.some(x=>x.email)){alert("None of this day's businesses have an email address on file.");return;}
+  openModal(`
+  <h2>Email this day's businesses <button class="x" onclick="closeModal()">✕</button></h2>
+  <div class="small muted" style="margin-bottom:6px">Uncheck anyone you don't want. More than one address goes in BCC.</div>
+  ${items.map(x=>`<label style="display:flex;align-items:center;gap:10px;text-transform:none;font-size:1rem;font-weight:400;margin:8px 0">
+    <input type="checkbox" class="demail" value="${esc(x.email)}" style="width:22px;height:22px" ${x.email?'checked':'disabled'}>
+    <span>${esc(x.name)}${x.email?'':' <span class="muted small">(no email on file)</span>'}</span></label>`).join('')}
+  <button class="primary" onclick="emailTo(collectDayEmails())">Open email</button>
+  <button class="ghost" style="width:100%;margin-top:8px" onclick="copyEmails(collectDayEmails())">Copy emails</button>`);
+}
+function collectDayEmails(){return [...document.querySelectorAll('.demail:checked')].map(i=>i.value).filter(Boolean);}
 /* quick add on a calendar slot */
 function openSlotMenu(date,time){
   openModal(`
