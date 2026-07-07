@@ -332,6 +332,7 @@ function bizRow(s){
       <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
       <a href="${esc(mapUrl(addr||s.business))}" target="_blank" rel="noopener">🧭</a>
       ${c&&(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
+      ${c&&c.email?`<a href="mailto:${esc(c.email)}">✉️</a>`:''}
       ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
     </div>
   </div>`;
