@@ -395,7 +395,7 @@ function rToday(){
     <div class="label">${niceDay(d)}${d===todayStr()?'':` <a href="#" class="small" style="color:var(--teal)" onclick="go('today',{day:'${todayStr()}'});return false"> (go to today)</a>`}</div>
     <button onclick="go('today',{day:'${addDays(d,1)}'})">›</button>
   </div>
-  <input value="${esc(dayTitle(d))}" placeholder="Day title — e.g. Lewistown, Home day"
+  <input value="${esc(dayTitle(d))}" placeholder="Territory / focus (optional)"
     onchange="setDayTitle('${d}',this.value)"
     style="margin-bottom:10px;text-align:center;font-weight:700;color:var(--navy)">
   <div class="card" style="padding:4px 8px">
