@@ -105,7 +105,10 @@ td{padding:7px 8px;border-bottom:1px solid var(--line)}
 .bizrow:first-of-type{border-top:none}
 .bizrow input[type=checkbox]{width:24px;height:24px;flex:none;accent-color:var(--green)}
 .bizrow.done .bname{text-decoration:line-through;color:var(--muted)}
+.bizrow.pri{background:#fff8e1;border-radius:8px}
 .bname{font-weight:700}
+.ordcol{display:flex;flex-direction:column;gap:3px;flex:none}
+.ordcol button{border:1px solid var(--line);background:var(--card);border-radius:6px;font-size:.6rem;padding:2px 6px;color:var(--muted);cursor:pointer}
 @media print{
   header,nav,.fab,.no-print{display:none!important}
   body{background:#fff;padding:0}
@@ -318,22 +321,45 @@ function stopsOn(date){return live('stops').filter(s=>s.date===date)
   .sort((a,b)=>(a.time||'99')<(b.time||'99')?-1:1);}
 const isEvent=s=>s.kind==='event';
 function stopAddr(s){const c=s.customerId?custById(s.customerId):null;return s.address||(c?c.address:'')||'';}
+/* businesses for a day in the user's chosen (route) order */
+function dayBizs(d){
+  return live('stops').filter(s=>s.date===d&&!isEvent(s))
+    .sort((a,b)=>((a.ord??9999)-(b.ord??9999))||String(a.time||'99').localeCompare(String(b.time||'99')));
+}
+function nextOrd(d){return dayBizs(d).reduce((m,s)=>Math.max(m,(s.ord??-1)+1),0);}
+function moveStop(id,dir){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  const l=dayBizs(s.date);const i=l.findIndex(x=>x.id===id);const j=i+dir;
+  if(i<0||j<0||j>=l.length)return;
+  [l[i],l[j]]=[l[j],l[i]];
+  l.forEach((x,k)=>{x.ord=k;x.updatedAt=Date.now();});
+  persist();markDirty();queueSync();render();
+}
+function togglePri(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  s.priority=!s.priority;saveRec('stops',s);
+}
 function bizRow(s){
   const c=s.customerId?custById(s.customerId):null;
   const addr=stopAddr(s);
   const done=s.status==='Done';
-  return `<div class="bizrow ${done?'done':''}">
+  return `<div class="bizrow ${done?'done':''} ${s.priority?'pri':''}">
     <input type="checkbox" ${done?'checked':''} onchange="setVisited('${s.id}',this.checked)">
     <div class="grow" onclick="openStopForm('${s.id}')" style="cursor:pointer">
-      <div class="bname">${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
+      <div class="bname">${s.priority?'⭐ ':''}${esc(s.business)}${s.unplanned?' <span class="badge">Unplanned</span>':''}</div>
       <div class="muted small">${esc(s.activity||'')}${s.time?' · '+fmtTime(s.time):''}${c&&c.contact?' · 👤 '+esc(c.contact):''}${addr?' · '+esc(addr):''}${s.notes?' · '+esc(s.notes):''}</div>
     </div>
     <div class="links" style="white-space:nowrap">
+      <a href="#" onclick="togglePri('${s.id}');return false" style="${s.priority?'':'filter:grayscale(1);opacity:.5'}">⭐</a>
       <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
       <a href="${esc(mapUrl(addr||s.business))}" target="_blank" rel="noopener">🧭</a>
       ${c&&(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
       ${c&&c.email?`<a href="mailto:${esc(c.email)}">✉️</a>`:''}
       ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
+    </div>
+    <div class="ordcol">
+      <button onclick="moveStop('${s.id}',-1)">▲</button>
+      <button onclick="moveStop('${s.id}',1)">▼</button>
     </div>
   </div>`;
 }
@@ -381,8 +407,9 @@ function slotTimes(){
 }
 function rToday(){
   const d=state.day,all=stopsOn(d);
-  const bizs=all.filter(s=>!isEvent(s));
+  const bizs=dayBizs(d);
   const visited=bizs.filter(s=>s.status==='Done');
+  const priLeft=bizs.filter(s=>s.priority&&s.status!=='Done');
   const times=slotTimes();
   const offGrid=all.filter(s=>s.time&&!times.includes(s.time));
   const m=live('mileage').find(x=>x.date===d)||{};
@@ -410,13 +437,15 @@ function rToday(){
   </div>
   <div class="row">
     <h3 class="grow">Businesses <span class="badge">${visited.length} of ${bizs.length} visited</span></h3>
-    ${bizs.length?`<button class="ghost" style="flex:none" onclick="openDayEmail('${d}')">✉ Email</button>`:''}
+    ${bizs.length?`<button class="ghost" style="flex:none" onclick="openPlannedRoute('${d}')">🧭 Route</button>
+    <button class="ghost" style="flex:none" onclick="openDayEmail('${d}')">✉ Email</button>`:''}
   </div>
   <div class="card">
     ${bizs.length?bizs.map(bizRow).join(''):'<div class="empty">No businesses on the list yet.<br>Tap ＋ to add the places you want to hit today.</div>'}
   </div>
   <h3>End of day</h3>
   <div class="card">
+    ${priLeft.length?`<div class="notice">⭐ Priority stops not visited yet: <b>${priLeft.map(s=>esc(s.business)).join(', ')}</b></div>`:''}
     <div class="row" style="margin-bottom:8px">
       <button class="ghost grow" ${visited.length?'':'disabled style="opacity:.5"'} onclick="openRoute('${d}')">🧭 Open route in Maps (${visited.length} stops)</button>
       <button class="ghost grow" ${visited.length?'':'disabled style="opacity:.5"'} onclick="fillRouteNotes('${d}')">📝 Log visited as route</button>
@@ -431,7 +460,13 @@ function rToday(){
   </div>`;
 }
 function visitedWithAddr(d){
-  return stopsOn(d).filter(s=>!isEvent(s)&&s.status==='Done');
+  return dayBizs(d).filter(s=>s.status==='Done');
+}
+function openPlannedRoute(d){
+  const l=dayBizs(d).filter(s=>s.status!=='Done');
+  const addrs=(l.length?l:dayBizs(d)).map(s=>stopAddr(s)||s.business).filter(Boolean);
+  if(!addrs.length){alert('No businesses on the list yet.');return;}
+  window.open('https://www.google.com/maps/dir/'+addrs.map(encodeURIComponent).join('/'),'_blank');
 }
 function openRoute(d){
   const addrs=visitedWithAddr(d).map(s=>stopAddr(s)||s.business).filter(Boolean);
@@ -586,8 +621,81 @@ function openStopForm(id,date){
     <button class="primary" type="submit">Save</button>
     ${id?`<button type="button" class="ghost" style="width:100%;margin-top:8px"
       onclick="closeModal();actionForStop('${id}')">＋ Action item for this business</button>
+    <button type="button" class="ghost" style="width:100%;margin-top:8px"
+      onclick="closeModal();openSendToDay('${id}')">📆 Copy / move to another day</button>
+    <button type="button" class="ghost" style="width:100%;margin-top:8px"
+      onclick="downloadStopIcs('${id}')">📅 Add to Outlook calendar (.ics)</button>
     <button type="button" class="danger" style="width:100%;margin-top:8px" onclick="delRec('stops','${id}');closeModal()">Delete Stop</button>`:''}
   </form>`);
+}
+function openSendToDay(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  openModal(`
+  <h2>${esc(s.business)} → another day <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return false">
+    <label>Which day?</label><input type="date" id="sendDate" value="${addDays(s.date,1)}">
+    <button class="primary" type="button" onclick="sendToDay('${id}',false)">Copy — keep it on ${shortDay(s.date)} too</button>
+    <button class="ghost" style="width:100%;margin-top:8px" type="button" onclick="sendToDay('${id}',true)">Move — take it off ${shortDay(s.date)}</button>
+  </form>`);
+}
+function sendToDay(id,move){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  const date=$('#sendDate').value;
+  if(!date){alert('Pick a day first.');return;}
+  if(move){
+    s.date=date;s.status='Planned';s.ord=nextOrd(date);
+    saveRec('stops',s);
+  }else{
+    const n=Object.assign({},s,{id:uid(),date,status:'Planned',ord:nextOrd(date),updatedAt:Date.now()});
+    db.stops.push(n);
+    persist();markDirty();queueSync();render();
+  }
+  closeModal();
+}
+/* ---- Outlook / calendar export (.ics) ---- */
+function icsEsc(t){return String(t||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');}
+function icsEvent(s){
+  const d=s.date.replace(/-/g,'');
+  let dt;
+  if(s.time){
+    const [h,m]=s.time.split(':').map(Number);
+    const end=h*60+m+30;
+    dt=`DTSTART:${d}T${pad(h)}${pad(m)}00\r\nDTEND:${d}T${pad(Math.floor(end/60))}${pad(end%60)}00`;
+  }else{
+    dt=`DTSTART;VALUE=DATE:${d}\r\nDTEND;VALUE=DATE:${addDays(s.date,1).replace(/-/g,'')}`;
+  }
+  const stamp=new Date().toISOString().replace(/[-:.]/g,'').slice(0,15)+'Z';
+  return `BEGIN:VEVENT\r\nUID:${s.id}@fieldplanner\r\nDTSTAMP:${stamp}\r\n${dt}\r\nSUMMARY:${icsEsc((s.activity&&s.activity!=='Visit'?s.activity+': ':'Visit: ')+s.business)}\r\nLOCATION:${icsEsc(stopAddr(s))}\r\nDESCRIPTION:${icsEsc(s.notes||'')}\r\nEND:VEVENT`;
+}
+function downloadIcs(events,name){
+  const body=`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Jays Field Planner//EN\r\n${events.join('\r\n')}\r\nEND:VCALENDAR\r\n`;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([body],{type:'text/calendar'}));
+  a.download=name;a.click();
+}
+function downloadStopIcs(id){
+  const s=db.stops.find(x=>x.id===id);if(!s)return;
+  downloadIcs([icsEvent(s)],(s.business+'-'+s.date).replace(/[^\w-]+/g,'_')+'.ics');
+}
+function weekTimedStops(wk){
+  return live('stops').filter(s=>!isEvent(s)&&s.date>=wk&&s.date<=addDays(wk,4)&&s.time)
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+}
+function downloadWeekIcs(wk){
+  const l=weekTimedStops(wk);
+  if(!l.length){alert('No timed appointments this week yet — stops need a time to go on the calendar.');return;}
+  downloadIcs(l.map(icsEvent),'fieldplanner-week-'+wk+'.ics');
+}
+function emailSchedule(wk){
+  let body='Schedule for the week of '+shortDay(wk)+'\n';
+  for(let i=0;i<5;i++){
+    const d=addDays(wk,i),t=dayTitle(d),l=dayBizs(d);
+    body+='\n'+niceDay(d)+(t?' — '+t:'')+'\n';
+    if(!l.length){body+='  —\n';continue;}
+    for(const s of l)body+='  '+(s.time?fmtTime(s.time)+'  ':'')+s.business+(stopAddr(s)?'  ('+stopAddr(s)+')':'')+'\n';
+  }
+  location.href='mailto:?subject='+encodeURIComponent('Weekly schedule — week of '+shortDay(wk))
+    +'&body='+encodeURIComponent(body);
 }
 function fillFromCustomer(inp){
   const c=custByName(inp.value);
@@ -622,6 +730,7 @@ function submitStop(e,id){
   Object.assign(s,{date:f.get('date'),time:f.get('time'),business:f.get('business').trim(),
     address:f.get('address').trim(),activity:f.get('activity'),status:f.get('status'),
     notes:f.get('notes').trim(),unplanned:!!f.get('unplanned')});
+  if(!id)s.ord=nextOrd(s.date);
   const c=upsertCustomerFromStop(f,s);
   s.customerId=c.id;
   const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
@@ -694,12 +803,12 @@ function openAddToDay(){
 function submitAddToDay(e){
   e.preventDefault();
   const date=new FormData(e.target).get('date');
-  let n=0;
+  let n=0,base=nextOrd(date);
   for(const id of selCust){
     const c=custById(id);if(!c)continue;
     if(live('stops').some(s=>s.date===date&&s.customerId===id))continue;
     db.stops.push({id:uid(),date,time:'',business:c.name,address:c.address||'',activity:'Visit',
-      status:'Planned',notes:'',unplanned:false,customerId:id,updatedAt:Date.now()});
+      status:'Planned',notes:'',unplanned:false,customerId:id,ord:base+n,updatedAt:Date.now()});
     n++;
   }
   persist();markDirty();queueSync();selCust.clear();closeModal();
@@ -944,6 +1053,10 @@ function rBoss(){
     <button onclick="go('boss',{week:'${addDays(wk,-7)}'})">‹</button>
     <div class="label">Week of ${shortDay(wk)}</div>
     <button onclick="go('boss',{week:'${addDays(wk,7)}'})">›</button>
+  </div>
+  <div class="row no-print" style="margin-bottom:8px">
+    <button class="ghost grow" onclick="downloadWeekIcs('${wk}')">📅 Week → Outlook (.ics)</button>
+    <button class="ghost grow" onclick="emailSchedule('${wk}')">✉ Email schedule</button>
   </div>
   <button class="primary no-print" onclick="window.print()" style="margin-bottom:12px">🖨️ Print / Save as PDF</button>
   <div class="card">
