@@ -182,7 +182,7 @@ const CAL_START=7,CAL_END=17; // calendar grid 7:00 AM - 5:00 PM
 /* ============ data ============ */
 function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[],days:[]}}
 let db=(()=>{try{const s=localStorage.getItem('fp_data');if(s)return Object.assign(blankDb(),JSON.parse(s));}catch(e){}return blankDb();})();
-let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',custTown:'',custSort:'name',actFilter:'Open',custDetail:null};
+let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',custTowns:[],custSort:'name',actFilter:'Open',custDetail:null};
 /* day titles ("Lewistown", "Home day") */
 function dayTitle(d){const r=live('days').find(x=>x.date===d);return r?(r.title||''):'';}
 function setDayTitle(d,v){
@@ -694,6 +694,8 @@ function timeOptions(sel){
   return o;
 }
 function custDatalist(){return `<datalist id="custlist">${live('customers').map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>`;}
+function allTowns(){return[...new Set(live('customers').map(c=>(c.town||'').trim()).filter(Boolean))].sort();}
+function townDatalist(){return `<datalist id="townlist">${allTowns().map(t=>`<option value="${esc(t)}">`).join('')}</datalist>`;}
 function openStopForm(id,date){
   const s=id?db.stops.find(x=>x.id===id):{date:date||state.day,time:'',business:'',address:'',activity:'Visit',status:'Planned',notes:'',unplanned:false};
   const c=s.customerId?custById(s.customerId):custByName(s.business||'');
@@ -706,6 +708,8 @@ function openStopForm(id,date){
       oninput="fillFromCustomer(this)" autocomplete="off">
     ${custDatalist()}
     <label>Address (optional — Maps finds most places by name)</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
+    <label>Town / Area (for filtering)</label><input name="town" id="stopTown" list="townlist" value="${esc(c?c.town:'')}" autocomplete="off">
+    ${townDatalist()}
     <label>Account #</label><input name="account" id="stopAcct" value="${esc(c?c.account:'')}">
     <label>POC name</label><input name="pocName" id="stopPocName" value="${esc(c?c.contact:'')}">
     <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
@@ -800,6 +804,7 @@ function fillFromCustomer(inp){
   const c=custByName(inp.value);
   if(!c)return;
   if(!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
+  if(!$('#stopTown').value)$('#stopTown').value=c.town||'';
   if(!$('#stopAcct').value)$('#stopAcct').value=c.account||'';
   if(!$('#stopPocName').value)$('#stopPocName').value=c.contact||'';
   if(!$('#stopPocPhone').value)$('#stopPocPhone').value=c.phone||'';
@@ -809,8 +814,9 @@ function upsertCustomerFromStop(f,s){
   let c=custByName(s.business);
   const poc={contact:String(f.get('pocName')||'').trim(),phone:String(f.get('pocPhone')||'').trim(),email:String(f.get('pocEmail')||'').trim()};
   const acct=String(f.get('account')||'').trim();
+  const town=String(f.get('town')||'').trim();
   if(!c){
-    c={id:uid(),name:s.business,account:acct,address:s.address||'',town:'',contact:poc.contact,phone:poc.phone,
+    c={id:uid(),name:s.business,account:acct,address:s.address||'',town,contact:poc.contact,phone:poc.phone,
        email:poc.email,billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()};
     db.customers.push(c);
   }else{
@@ -818,6 +824,7 @@ function upsertCustomerFromStop(f,s){
     if(poc.phone)c.phone=poc.phone;
     if(poc.email)c.email=poc.email;
     if(acct)c.account=acct;
+    if(town&&!c.town)c.town=town;
     if(s.address&&!c.address)c.address=s.address;
     c.updatedAt=Date.now();
   }
@@ -837,13 +844,108 @@ function submitStop(e,id){
   saveRec('stops',s);closeModal();return false;
 }
 
+/* ---- best-effort town extraction from a freeform US address ---- */
+const US_STATE_ABBR=new Set(['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA',
+  'ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD',
+  'TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']);
+const TOWN_PREFIX_WORDS=new Set(['MC','MAC','MT','MOUNT','PORT','NEW','SAINT','ST','FORT','LAKE','WEST','EAST','NORTH','SOUTH']);
+const ADDR_NOISE_WORDS=new Set(['STE','SUITE','UNIT','APT','BLDG','BUILDING','FL','FLOOR','RM','ROOM','FRNT','REAR','OFC','OFFICE','STORE']);
+function titleCase(s){return s.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
+function smartCase(w){return(/[a-z]/.test(w)&&/[A-Z]/.test(w.slice(1)))?w:titleCase(w);}
+function guessTown(address){
+  if(!address)return'';
+  const clean=address.replace(/,/g,' ').replace(/([A-Za-z]{2})(\d{5}(-\d{4})?)\b/,'$1 $2').trim();
+  const toks=clean.split(/\s+/).filter(Boolean);
+  let stIdx=-1;
+  for(let i=toks.length-1;i>=1;i--){
+    const t=toks[i].toUpperCase();
+    if(US_STATE_ABBR.has(t)){stIdx=i;break;}
+  }
+  if(stIdx<1)return'';
+  // require either a 5-digit zip right after the state, or the state to be the last token
+  const after=toks[stIdx+1];
+  if(after&&!/^\d{5}(-\d{4})?$/.test(after))return'';
+  let end=stIdx-1;
+  if(end<0||ADDR_NOISE_WORDS.has(toks[end].toUpperCase()))return'';
+  let words=[toks[end]];
+  if(end-1>=0){
+    const prev=toks[end-1].toUpperCase().replace(/\.$/,'');
+    if(TOWN_PREFIX_WORDS.has(prev)){
+      words.unshift(toks[end-1]);
+      if((prev==='MC'||prev==='MAC')&&words.length===2)return prev==='MC'?'Mc'+smartCase(words[1]):'Mac'+smartCase(words[1]);
+    }
+  }
+  return words.map(smartCase).join(' ');
+}
+
 /* ============ CUSTOMERS ============ */
 const selCust=new Set();
+function toggleTownFilter(t){
+  const i=state.custTowns.indexOf(t);
+  if(i>=0)state.custTowns.splice(i,1);else state.custTowns.push(t);
+  render();
+}
+function townChip(label,active,onclick){
+  return `<button class="chip" style="background:${active?'var(--teal)':'var(--light)'};color:${active?'#fff':'var(--navy)'}" onclick="${onclick}">${esc(label)}</button>`;
+}
+function openGuessTowns(){
+  const cands=live('customers').filter(c=>!(c.town||'').trim()&&(c.address||'').trim())
+    .map(c=>({c,guess:guessTown(c.address)})).filter(x=>x.guess);
+  if(!cands.length){alert('No missing towns could be guessed from addresses on file. You can set towns manually — edit a customer, or select several and use "Set town".');return;}
+  openModal(`
+  <h2>Fill in missing towns <button class="x" onclick="closeModal()">✕</button></h2>
+  <div class="small muted" style="margin-bottom:10px">Guessed from each customer's address. Review, edit anything wrong, uncheck to skip, then Apply.</div>
+  <form id="guessForm" onsubmit="return applyGuessedTowns(event)">
+    ${cands.map((x,i)=>`
+    <div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
+      <input type="checkbox" name="use${i}" checked style="width:22px;height:22px;flex:none;accent-color:var(--teal)">
+      <div class="grow">
+        <div class="small" style="font-weight:600">${esc(x.c.name)}</div>
+        <input name="town${i}" value="${esc(x.guess)}" data-cid="${x.c.id}">
+      </div>
+    </div>`).join('')}
+    <button class="primary" type="submit" style="margin-top:12px">Apply ${cands.length} town${cands.length===1?'':'s'}</button>
+  </form>`);
+}
+function applyGuessedTowns(e){
+  e.preventDefault();
+  const f=new FormData(e.target);
+  const inputs=[...e.target.querySelectorAll('input[data-cid]')];
+  let n=0;
+  for(const inp of inputs){
+    const i=inp.name.replace('town','');
+    if(!f.get('use'+i))continue;
+    const town=inp.value.trim();
+    if(!town)continue;
+    const c=custById(inp.dataset.cid);if(!c)continue;
+    c.town=town;c.updatedAt=Date.now();n++;
+  }
+  persist();markDirty();queueSync();closeModal();render();
+  alert(n+' town'+(n===1?'':'s')+' set.');
+  return false;
+}
+function openBulkSetTown(){
+  openModal(`
+  <h2>Set town for ${selCust.size} customer${selCust.size===1?'':'s'} <button class="x" onclick="closeModal()">✕</button></h2>
+  <form onsubmit="return submitBulkSetTown(event)">
+    <label>Town / Area</label><input name="town" list="townlist" required autofocus>
+    ${townDatalist()}
+    <button class="primary" type="submit">Set Town</button>
+  </form>`);
+}
+function submitBulkSetTown(e){
+  e.preventDefault();
+  const town=new FormData(e.target).get('town').trim();
+  if(!town)return false;
+  for(const id of selCust){const c=custById(id);if(!c)continue;c.town=town;c.updatedAt=Date.now();}
+  persist();markDirty();queueSync();selCust.clear();closeModal();render();
+  return false;
+}
 function rCustomers(){
   const q=state.custSearch.toLowerCase();
-  const towns=[...new Set(live('customers').map(c=>(c.town||'').trim()).filter(Boolean))].sort();
+  const towns=allTowns();
   let list=live('customers').filter(c=>!q||[c.name,c.address,c.town,c.contact,c.account].join(' ').toLowerCase().includes(q));
-  if(state.custTown)list=list.filter(c=>(c.town||'').trim().toLowerCase()===state.custTown.toLowerCase());
+  if(state.custTowns.length)list=list.filter(c=>state.custTowns.includes((c.town||'').trim()));
   if(state.custSort==='visit')list.sort((a,b)=>String(a.lastVisit||'').localeCompare(String(b.lastVisit||''))||a.name.localeCompare(b.name));
   else if(state.custSort==='town')list.sort((a,b)=>String(a.town||'').localeCompare(String(b.town||''))||a.name.localeCompare(b.name));
   else list.sort((a,b)=>a.name.localeCompare(b.name));
@@ -853,20 +955,22 @@ function rCustomers(){
       oninput="state.custSearch=this.value;render()">
     <button class="ghost" style="flex:none" onclick="openImport()">⬆ Import</button>
   </div>
+  ${towns.length?`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
+    ${townChip('All towns',state.custTowns.length===0,'state.custTowns=[];render()')}
+    ${towns.map(t=>townChip(t,state.custTowns.includes(t),`toggleTownFilter('${esc(t).replace(/'/g,"\\'")}')`)).join('')}
+  </div>`:`<div class="notice small">No towns on file yet. <a href="#" onclick="openGuessTowns();return false" style="color:var(--teal);font-weight:600">Try guessing towns from addresses</a>, or add one while editing a customer.</div>`}
   <div class="row" style="margin-bottom:10px">
-    <select class="grow" onchange="state.custTown=this.value;render()">
-      <option value="">All towns</option>
-      ${towns.map(t=>`<option value="${esc(t)}" ${state.custTown===t?'selected':''}>${esc(t)}</option>`).join('')}
-    </select>
     <select class="grow" onchange="state.custSort=this.value;render()">
       <option value="name" ${state.custSort==='name'?'selected':''}>Sort: Name</option>
       <option value="visit" ${state.custSort==='visit'?'selected':''}>Sort: Longest since visit</option>
       <option value="town" ${state.custSort==='town'?'selected':''}>Sort: Town</option>
     </select>
+    <button class="ghost" style="flex:none" onclick="openGuessTowns()">🔍 Guess towns</button>
   </div>
   ${selCust.size?`<div class="card" style="position:sticky;top:54px;z-index:10;border-color:var(--teal)">
     <div class="row" style="flex-wrap:wrap">
       <b class="grow">${selCust.size} selected</b>
+      <button class="ghost" onclick="openBulkSetTown()">🏙️ Set town</button>
       <button class="ghost" onclick="openAddToDay()">＋ Add to a day</button>
       <button class="ghost" onclick="emailSelected()">✉ Email</button>
       <button class="ghost" onclick="copySelectedEmails()">Copy emails</button>
@@ -888,7 +992,7 @@ function rCustomers(){
         <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭</a>
       </div>
     </div>
-  </div>`).join(''):`<div class="empty">${q||state.custTown?'No customers match that search/filter.':'No customers yet.<br>Tap ＋ to add one, or ⬆ Import a list.'}</div>`}`;
+  </div>`).join(''):`<div class="empty">${q||state.custTowns.length?'No customers match that search/filter.':'No customers yet.<br>Tap ＋ to add one, or ⬆ Import a list.'}</div>`}`;
 }
 function toggleSel(id,on){if(on)selCust.add(id);else selCust.delete(id);render();}
 function openAddToDay(){
