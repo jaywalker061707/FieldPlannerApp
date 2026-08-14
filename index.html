@@ -182,7 +182,7 @@ const CAL_START=7,CAL_END=17; // calendar grid 7:00 AM - 5:00 PM
 /* ============ data ============ */
 function blankDb(){return{version:1,updatedAt:0,customers:[],stops:[],actions:[],mileage:[],days:[]}}
 let db=(()=>{try{const s=localStorage.getItem('fp_data');if(s)return Object.assign(blankDb(),JSON.parse(s));}catch(e){}return blankDb();})();
-let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',custTowns:[],custSort:'name',actFilter:'Open',custDetail:null};
+let state={view:'today',day:todayStr(),week:mondayOf(todayStr()),custSearch:'',custZips:[],custSort:'name',actFilter:'Open',custDetail:null};
 /* day titles ("Lewistown", "Home day") */
 function dayTitle(d){const r=live('days').find(x=>x.date===d);return r?(r.title||''):'';}
 function setDayTitle(d,v){
@@ -694,8 +694,6 @@ function timeOptions(sel){
   return o;
 }
 function custDatalist(){return `<datalist id="custlist">${live('customers').map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>`;}
-function allTowns(){return[...new Set(live('customers').map(c=>(c.town||'').trim()).filter(Boolean))].sort();}
-function townDatalist(){return `<datalist id="townlist">${allTowns().map(t=>`<option value="${esc(t)}">`).join('')}</datalist>`;}
 function openStopForm(id,date){
   const s=id?db.stops.find(x=>x.id===id):{date:date||state.day,time:'',business:'',address:'',activity:'Visit',status:'Planned',notes:'',unplanned:false};
   const c=s.customerId?custById(s.customerId):custByName(s.business||'');
@@ -813,7 +811,7 @@ function upsertCustomerFromStop(f,s){
   const poc={contact:String(f.get('pocName')||'').trim(),phone:String(f.get('pocPhone')||'').trim(),email:String(f.get('pocEmail')||'').trim()};
   const acct=String(f.get('account')||'').trim();
   if(!c){
-    c={id:uid(),name:s.business,account:acct,address:s.address||'',town:guessTown(s.address),contact:poc.contact,phone:poc.phone,
+    c={id:uid(),name:s.business,account:acct,address:s.address||'',contact:poc.contact,phone:poc.phone,
        email:poc.email,billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()};
     db.customers.push(c);
   }else{
@@ -822,7 +820,6 @@ function upsertCustomerFromStop(f,s){
     if(poc.email)c.email=poc.email;
     if(acct)c.account=acct;
     if(s.address&&!c.address)c.address=s.address;
-    if(!c.town)c.town=guessTown(c.address);
     c.updatedAt=Date.now();
   }
   return c;
@@ -876,76 +873,76 @@ function guessTown(address){
   return words.map(smartCase).join(' ');
 }
 
+/* ---- location grouping from ZIP code (reliable) with a best-effort friendly label ---- */
+function zipOf(address){
+  if(!address)return'';
+  const clean=String(address).replace(/([A-Za-z]{2})(\d{5}(-\d{4})?)\b/,'$1 $2');
+  const m=clean.match(/\d{5}(?!\d)/g);
+  return m?m[m.length-1]:'';
+}
+function locationOptions(){
+  const groups={};
+  for(const c of live('customers')){
+    const zip=zipOf(c.address);
+    if(!zip)continue;
+    const g=groups[zip]||(groups[zip]={count:0,labels:{}});
+    g.count++;
+    const guess=guessTown(c.address);
+    if(guess)g.labels[guess]=(g.labels[guess]||0)+1;
+  }
+  return Object.keys(groups).map(zip=>{
+    const g=groups[zip];
+    let label=zip,best=0;
+    for(const name in g.labels)if(g.labels[name]>best){best=g.labels[name];label=name;}
+    return{zip,label,count:g.count};
+  }).sort((a,b)=>a.label.localeCompare(b.label));
+}
+function locationLabelFor(zip,locs){const o=(locs||locationOptions()).find(o=>o.zip===zip);return o?o.label:zip;}
+
 /* ============ CUSTOMERS ============ */
 const selCust=new Set();
-function toggleTownFilter(t){
-  const i=state.custTowns.indexOf(t);
-  if(i>=0)state.custTowns.splice(i,1);else state.custTowns.push(t);
-  render();
+function toggleZipFilter(zip){
+  const i=state.custZips.indexOf(zip);
+  if(i>=0)state.custZips.splice(i,1);else state.custZips.push(zip);
+  render();openLocationFilter();
 }
-function townChip(label,active,onclick){
-  return `<button class="chip" style="background:${active?'var(--teal)':'var(--light)'};color:${active?'#fff':'var(--navy)'}" onclick="${onclick}">${esc(label)}</button>`;
+function selectAllLocations(){
+  state.custZips=locationOptions().map(l=>l.zip);
+  render();openLocationFilter();
 }
-function openGuessTowns(){
-  const cands=live('customers').filter(c=>!(c.town||'').trim()&&(c.address||'').trim())
-    .map(c=>({c,guess:guessTown(c.address)})).filter(x=>x.guess);
-  if(!cands.length){alert('No missing towns could be guessed from addresses on file. You can set towns manually — edit a customer, or select several and use "Set town".');return;}
+function clearAllLocations(){
+  state.custZips=[];
+  render();openLocationFilter();
+}
+function locFilterSummary(locs){
+  if(!state.custZips.length)return'All locations';
+  if(state.custZips.length===1)return locationLabelFor(state.custZips[0],locs);
+  return state.custZips.length+' locations selected';
+}
+function openLocationFilter(){
+  const locs=locationOptions();
+  if(!locs.length){alert("No addresses with a recognizable ZIP code yet. Locations show up automatically once a customer's address includes one.");return;}
   openModal(`
-  <h2>Fill in missing towns <button class="x" onclick="closeModal()">✕</button></h2>
-  <div class="small muted" style="margin-bottom:10px">Guessed from each customer's address. Review, edit anything wrong, uncheck to skip, then Apply.</div>
-  <form id="guessForm" onsubmit="return applyGuessedTowns(event)">
-    ${cands.map((x,i)=>`
-    <div class="row" style="padding:6px 0;border-top:1px solid var(--line)">
-      <input type="checkbox" name="use${i}" checked style="width:22px;height:22px;flex:none;accent-color:var(--teal)">
-      <div class="grow">
-        <div class="small" style="font-weight:600">${esc(x.c.name)}</div>
-        <input name="town${i}" value="${esc(x.guess)}" data-cid="${x.c.id}">
-      </div>
-    </div>`).join('')}
-    <button class="primary" type="submit" style="margin-top:12px">Apply ${cands.length} town${cands.length===1?'':'s'}</button>
-  </form>`);
-}
-function applyGuessedTowns(e){
-  e.preventDefault();
-  const f=new FormData(e.target);
-  const inputs=[...e.target.querySelectorAll('input[data-cid]')];
-  let n=0;
-  for(const inp of inputs){
-    const i=inp.name.replace('town','');
-    if(!f.get('use'+i))continue;
-    const town=inp.value.trim();
-    if(!town)continue;
-    const c=custById(inp.dataset.cid);if(!c)continue;
-    c.town=town;c.updatedAt=Date.now();n++;
-  }
-  persist();markDirty();queueSync();closeModal();render();
-  alert(n+' town'+(n===1?'':'s')+' set.');
-  return false;
-}
-function openBulkSetTown(){
-  openModal(`
-  <h2>Set town for ${selCust.size} customer${selCust.size===1?'':'s'} <button class="x" onclick="closeModal()">✕</button></h2>
-  <form onsubmit="return submitBulkSetTown(event)">
-    <label>Town / Area</label><input name="town" list="townlist" required autofocus>
-    ${townDatalist()}
-    <button class="primary" type="submit">Set Town</button>
-  </form>`);
-}
-function submitBulkSetTown(e){
-  e.preventDefault();
-  const town=new FormData(e.target).get('town').trim();
-  if(!town)return false;
-  for(const id of selCust){const c=custById(id);if(!c)continue;c.town=town;c.updatedAt=Date.now();}
-  persist();markDirty();queueSync();selCust.clear();closeModal();render();
-  return false;
+  <h2>Filter by location <button class="x" onclick="closeModal();render()">✕</button></h2>
+  <div class="row" style="margin-bottom:8px">
+    <button class="ghost grow" onclick="selectAllLocations()">Select all</button>
+    <button class="ghost grow" onclick="clearAllLocations()">Clear all</button>
+  </div>
+  ${locs.map(l=>`
+  <label style="display:flex;align-items:center;gap:10px;text-transform:none;font-size:1rem;font-weight:400;margin:8px 0">
+    <input type="checkbox" style="width:22px;height:22px" ${state.custZips.includes(l.zip)?'checked':''}
+      onchange="toggleZipFilter('${l.zip}')">
+    <span class="grow">${esc(l.label)}</span><span class="muted small">${l.count}</span>
+  </label>`).join('')}
+  <button class="primary" style="margin-top:10px" onclick="closeModal();render()">Done</button>`);
 }
 function rCustomers(){
   const q=state.custSearch.toLowerCase();
-  const towns=allTowns();
-  let list=live('customers').filter(c=>!q||[c.name,c.address,c.town,c.contact,c.account].join(' ').toLowerCase().includes(q));
-  if(state.custTowns.length)list=list.filter(c=>state.custTowns.includes((c.town||'').trim()));
+  const locs=locationOptions();
+  let list=live('customers').filter(c=>!q||[c.name,c.address,c.contact,c.account].join(' ').toLowerCase().includes(q));
+  if(state.custZips.length)list=list.filter(c=>state.custZips.includes(zipOf(c.address)));
   if(state.custSort==='visit')list.sort((a,b)=>String(a.lastVisit||'').localeCompare(String(b.lastVisit||''))||a.name.localeCompare(b.name));
-  else if(state.custSort==='town')list.sort((a,b)=>String(a.town||'').localeCompare(String(b.town||''))||a.name.localeCompare(b.name));
+  else if(state.custSort==='town')list.sort((a,b)=>locationLabelFor(zipOf(a.address),locs).localeCompare(locationLabelFor(zipOf(b.address),locs))||a.name.localeCompare(b.name));
   else list.sort((a,b)=>a.name.localeCompare(b.name));
   return `
   <div class="row searchbar">
@@ -953,22 +950,17 @@ function rCustomers(){
       oninput="state.custSearch=this.value;render()">
     <button class="ghost" style="flex:none" onclick="openImport()">⬆ Import</button>
   </div>
-  ${towns.length?`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
-    ${townChip('All towns',state.custTowns.length===0,'state.custTowns=[];render()')}
-    ${towns.map(t=>townChip(t,state.custTowns.includes(t),`toggleTownFilter('${esc(t).replace(/'/g,"\\'")}')`)).join('')}
-  </div>`:`<div class="notice small">No towns on file yet. <a href="#" onclick="openGuessTowns();return false" style="color:var(--teal);font-weight:600">Try guessing towns from addresses</a>, or add one while editing a customer.</div>`}
   <div class="row" style="margin-bottom:10px">
+    <button class="ghost grow" onclick="openLocationFilter()">📍 ${esc(locFilterSummary(locs))} ▾</button>
     <select class="grow" onchange="state.custSort=this.value;render()">
       <option value="name" ${state.custSort==='name'?'selected':''}>Sort: Name</option>
       <option value="visit" ${state.custSort==='visit'?'selected':''}>Sort: Longest since visit</option>
-      <option value="town" ${state.custSort==='town'?'selected':''}>Sort: Town</option>
+      <option value="town" ${state.custSort==='town'?'selected':''}>Sort: Location</option>
     </select>
-    <button class="ghost" style="flex:none" onclick="openGuessTowns()">🔍 Guess towns</button>
   </div>
   ${selCust.size?`<div class="card" style="position:sticky;top:54px;z-index:10;border-color:var(--teal)">
     <div class="row" style="flex-wrap:wrap">
       <b class="grow">${selCust.size} selected</b>
-      <button class="ghost" onclick="openBulkSetTown()">🏙️ Set town</button>
       <button class="ghost" onclick="openAddToDay()">＋ Add to a day</button>
       <button class="ghost" onclick="emailSelected()">✉ Email</button>
       <button class="ghost" onclick="copySelectedEmails()">Copy emails</button>
@@ -981,7 +973,7 @@ function rCustomers(){
         ${selCust.has(c.id)?'checked':''} onchange="toggleSel('${c.id}',this.checked)">
       <div class="grow" onclick="openCustomerDetail('${c.id}')" style="cursor:pointer">
         <div class="biz" style="font-weight:700">${esc(c.name)}</div>
-        <div class="muted small">${c.town?esc(c.town)+' · ':''}${esc(c.address||'')}</div>
+        <div class="muted small">${zipOf(c.address)?esc(locationLabelFor(zipOf(c.address),locs))+' · ':''}${esc(c.address||'')}</div>
         <div class="muted small">${c.lastVisit?'Last visit '+shortDay(c.lastVisit):'Never visited'}${c.account?' · #'+esc(c.account):''}</div>
       </div>
       <div class="links" onclick="event.stopPropagation()" style="white-space:nowrap">
@@ -990,7 +982,7 @@ function rCustomers(){
         <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭</a>
       </div>
     </div>
-  </div>`).join(''):`<div class="empty">${q||state.custTowns.length?'No customers match that search/filter.':'No customers yet.<br>Tap ＋ to add one, or ⬆ Import a list.'}</div>`}`;
+  </div>`).join(''):`<div class="empty">${q||state.custZips.length?'No customers match that search/filter.':'No customers yet.<br>Tap ＋ to add one, or ⬆ Import a list.'}</div>`}`;
 }
 function toggleSel(id,on){if(on)selCust.add(id);else selCust.delete(id);render();}
 function openAddToDay(){
@@ -1044,12 +1036,13 @@ function openImport(){
   <div class="small muted" style="margin-bottom:6px">
     One business per line. Just a name works, or add details separated by <b>semicolons</b>
     (or paste columns straight from a spreadsheet) in this order:<br>
-    <b>Name; Account #; Address; Town; Contact; Phone; Email</b><br><br>
+    <b>Name; Account #; Address; Contact; Phone; Email</b><br>
+    Include a ZIP code in the address and location filtering picks it up automatically.<br><br>
     Businesses already in your list (same name) are skipped, so importing twice won't create duplicates.
   </div>
-  <textarea id="impIn" style="min-height:170px" placeholder="Tony's Pizza; 884412; 123 Main St; Lewistown; Maria; 717-555-0140; maria@tonys.com
+  <textarea id="impIn" style="min-height:170px" placeholder="Tony's Pizza; 884412; 123 Main St Lewistown PA 17044; Maria; 717-555-0140; maria@tonys.com
 Joe's Autobody
-Corner Deli; ; 500 Market St; Lewistown"></textarea>
+Corner Deli; ; 500 Market St Lewistown PA 17044"></textarea>
   <button class="primary" onclick="runImport()">Import</button>`);
 }
 function runImport(){
@@ -1057,9 +1050,9 @@ function runImport(){
   let added=0,skipped=0;
   for(const line of lines){
     const parts=(line.includes('\t')?line.split('\t'):line.split(';')).map(p=>p.trim());
-    const [name,account,address,town,contact,phone,email]=parts;
+    const [name,account,address,contact,phone,email]=parts;
     if(!name||custByName(name)){skipped++;continue;}
-    db.customers.push({id:uid(),name,account:account||'',address:address||'',town:(town||'').trim()||guessTown(address),
+    db.customers.push({id:uid(),name,account:account||'',address:address||'',
       contact:contact||'',phone:phone||'',email:email||'',billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()});
     added++;
   }
@@ -1101,7 +1094,7 @@ function openCustomerForm(id){
     <label>Business name</label><input name="name" value="${esc(c.name)}" required>
     <label>Account #</label><input name="account" value="${esc(c.account||'')}">
     <label>Address (optional — Maps finds most places by name)</label><input name="address" value="${esc(c.address||'')}">
-    <label>Town / Area (for filtering)</label><input name="town" value="${esc(c.town||'')}">
+    <div class="muted small" style="margin:-6px 0 6px">Location for filtering is picked up from the ZIP code here automatically.</div>
     <label>Primary contact</label><input name="contact" value="${esc(c.contact||'')}">
     <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
@@ -1117,8 +1110,7 @@ function openCustomerForm(id){
 function submitCustomer(e,id){
   e.preventDefault();const f=new FormData(e.target);
   const c=id?custById(id):{id:uid()};
-  for(const k of['name','account','address','town','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
-  if(!c.town)c.town=guessTown(c.address);
+  for(const k of['name','account','address','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
   const bfs=e.target.custFiles&&[...e.target.custFiles.files];
   if(bfs&&bfs.length)for(const bf of bfs)uploadCustomerFile(bf,c).catch(()=>alert('Attach failed for '+bf.name+' — check your signal and try again.'));
   saveRec('customers',c);closeModal();return false;
