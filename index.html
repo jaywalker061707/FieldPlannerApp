@@ -264,7 +264,8 @@ async function syncNow(retry,manual){
   }finally{syncing=false;}
 }
 function manualSync(){if(!getToken()){go('settings');return;}syncNow(false,true);}
-/* ---- bill photos (stored as files in the private repo) ---- */
+/* ---- customer files: any number of photos/PDFs/docs, stored in the private repo ---- */
+const FILE_ACCEPT='image/*,application/pdf,.heic,.heif,.xlsx,.xls,.csv,.doc,.docx,.txt,.rtf';
 function downscale(file,max,q){return new Promise((res,rej)=>{
   const img=new Image();
   img.onload=()=>{const sc=Math.min(1,max/Math.max(img.width,img.height));
@@ -275,46 +276,118 @@ function downscale(file,max,q){return new Promise((res,rej)=>{
   img.onerror=rej;img.src=URL.createObjectURL(file);});}
 function fileB64(file){return new Promise((res,rej)=>{
   const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});}
-async function uploadBillPhoto(file,cust){
-  if(!getToken()){alert('Set up sync first (More → Settings & Sync) so bill photos have somewhere to live.');return;}
+function extOf(name){const m=/\.([a-z0-9]+)$/i.exec(name||'');return m?m[1].toLowerCase():'';}
+function fileIcon(ext){
+  if(['jpg','jpeg','png','gif','webp','heic','heif'].includes(ext))return'📷';
+  if(ext==='pdf')return'📄';
+  if(['xlsx','xls','csv'].includes(ext))return'📊';
+  if(['doc','docx','rtf'].includes(ext))return'📝';
+  if(ext==='txt')return'📃';
+  return'📎';
+}
+function mimeFor(ext){
+  return{jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',pdf:'application/pdf'}[ext]||'application/octet-stream';
+}
+/* merges legacy single billFile (pre-multi-file data) into the files list, unpersisted */
+function custFiles(c){
+  const arr=(c.files||[]).slice();
+  if(c&&c.billFile&&!arr.some(f=>f.path===c.billFile))
+    arr.unshift({id:'legacy-file',name:'File.'+extOf(c.billFile),path:c.billFile,ext:extOf(c.billFile),legacy:true});
+  return arr;
+}
+async function uploadCustomerFile(file,cust){
+  if(!getToken()){alert('Set up sync first (More → Settings & Sync) so files have somewhere to live.');return;}
   let b64,ext;
-  if(file.type==='application/pdf'){
-    if(file.size>20*1024*1024){alert('That PDF is over 20 MB — too big to store. Use a screenshot instead.');return;}
-    b64=await fileB64(file);ext='pdf';
-  }else{
+  if(file.type.startsWith('image/')){
+    if(file.size>25*1024*1024){alert('That image is over 25 MB — too big to store.');return;}
     try{b64=(await downscale(file,1400,.8)).split(',')[1];ext='jpg';}
-    catch(e){alert('Could not read that file as an image on this device. Use a screenshot, JPEG/PNG, or a PDF.');return;}
+    catch(e){alert('Could not read that file as an image on this device.');return;}
+  }else{
+    if(file.size>20*1024*1024){alert('That file is over 20 MB — too big to store.');return;}
+    b64=await fileB64(file);ext=extOf(file.name)||'bin';
   }
-  const path='data/bills/'+cust.id+'.'+ext;
-  let sha=null;
-  try{const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}?ref=main&_=${Date.now()}`,
-    {headers:ghHeaders(),cache:'no-store'});if(r.ok)sha=(await r.json()).sha;}catch(e){}
-  const body={message:'Bill photo',content:b64,branch:'main'};if(sha)body.sha=sha;
+  const fid=uid();
+  const path='data/files/'+cust.id+'/'+fid+'.'+ext;
+  const body={message:'Add file',content:b64,branch:'main'};
   const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}`,
     {method:'PUT',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),body:JSON.stringify(body)});
   if(!r.ok)throw new Error('upload failed '+r.status);
-  cust.billFile=path;cust.updatedAt=Date.now();
+  cust.files=cust.files||[];
+  cust.files.push({id:fid,name:file.name,path,ext,size:file.size,addedAt:Date.now()});
+  cust.updatedAt=Date.now();
   persist();markDirty();queueSync();render();
 }
-async function viewBill(custId){
+async function ghDeleteFile(path,message){
+  const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}?ref=main`,{headers:ghHeaders()});
+  if(!r.ok)return;
+  const j=await r.json();
+  await fetch(`https://api.github.com/repos/${GH.repo}/contents/${path}`,
+    {method:'DELETE',headers:Object.assign({'Content-Type':'application/json'},ghHeaders()),
+     body:JSON.stringify({message,sha:j.sha,branch:'main'})});
+}
+async function deleteCustomerFile(custId,fileId){
   const c=custById(custId);if(!c)return;
-  if(c.billFile){
-    openModal(`<h2>${esc(c.name)} — bill <button class="x" onclick="closeModal()">✕</button></h2>
-      <div id="billBox" class="muted small">Loading bill…</div>`);
-    try{
-      const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${c.billFile}?ref=main`,
-        {headers:Object.assign(ghHeaders(),{'Accept':'application/vnd.github.raw'}),cache:'no-store'});
-      if(!r.ok)throw new Error(r.status);
-      const buf=await r.arrayBuffer();
-      const isPdf=c.billFile.endsWith('.pdf');
-      const url=URL.createObjectURL(new Blob([buf],{type:isPdf?'application/pdf':'image/jpeg'}));
-      const box=$('#billBox');
-      if(box)box.innerHTML=isPdf
-        ?`<iframe src="${url}" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:10px"></iframe>
-          <a href="${url}" target="_blank" style="display:block;margin-top:8px;color:var(--teal);font-weight:600">Open full screen</a>`
-        :`<img src="${url}" style="max-width:100%;border-radius:10px">`;
-    }catch(e){const box=$('#billBox');if(box)box.textContent='Could not load the bill — this needs internet and the sync token on this device.';}
-  }else if(c.billLink){window.open(c.billLink,'_blank');}
+  if(!confirm('Delete this file?'))return;
+  if(fileId==='legacy-file'){
+    try{await ghDeleteFile(c.billFile,'Remove file');}catch(e){}
+    c.billFile='';
+  }else{
+    const f=(c.files||[]).find(x=>x.id===fileId);if(!f)return;
+    try{await ghDeleteFile(f.path,'Remove file');}catch(e){}
+    c.files=(c.files||[]).filter(x=>x.id!==fileId);
+  }
+  c.updatedAt=Date.now();persist();markDirty();queueSync();
+  openCustomerFiles(custId);
+}
+function openCustomerFiles(custId){
+  const c=custById(custId);if(!c)return;
+  const files=custFiles(c);
+  openModal(`
+  <h2>${esc(c.name)} — files <button class="x" onclick="closeModal()">✕</button></h2>
+  ${c.billLink?`<div class="row" style="margin-bottom:10px"><a href="${esc(c.billLink)}" target="_blank" rel="noopener" style="color:var(--teal);font-weight:600">🔗 ${esc(c.billLink)}</a></div>`:''}
+  ${files.length?files.map(f=>`
+    <div class="row" style="padding:8px 0;border-top:1px solid var(--line)">
+      <span style="font-size:1.3rem">${fileIcon(f.ext)}</span>
+      <div class="grow" onclick="viewCustomerFile('${c.id}','${f.id}')" style="cursor:pointer;min-width:0">
+        <div style="font-weight:600;overflow-wrap:anywhere">${esc(f.name)}</div>
+        ${f.size?`<div class="muted small">${(f.size/1024).toFixed(0)} KB</div>`:''}
+      </div>
+      <button class="ghost" style="flex:none" onclick="viewCustomerFile('${c.id}','${f.id}')">View</button>
+      <button class="danger" style="flex:none" onclick="deleteCustomerFile('${c.id}','${f.id}')">✕</button>
+    </div>`).join(''):'<div class="empty">No files yet.</div>'}
+  <input type="file" id="addFileInp" multiple accept="${FILE_ACCEPT}" style="display:none" onchange="addFilesFromInput('${c.id}')">
+  <button class="primary" style="margin-top:12px" onclick="document.getElementById('addFileInp').click()">＋ Add file(s)</button>`);
+}
+async function addFilesFromInput(custId){
+  const inp=document.getElementById('addFileInp');if(!inp||!inp.files.length)return;
+  const c=custById(custId);if(!c)return;
+  const files=[...inp.files];
+  for(const f of files){
+    try{await uploadCustomerFile(f,c);}catch(e){alert('Upload failed for '+f.name+' — check your signal and try again.');}
+  }
+  openCustomerFiles(custId);
+}
+async function viewCustomerFile(custId,fileId){
+  const c=custById(custId);if(!c)return;
+  const f=custFiles(c).find(x=>x.id===fileId);if(!f)return;
+  openModal(`<h2>${esc(f.name)} <button class="x" onclick="closeModal()">✕</button></h2>
+    <div id="fileBox" class="muted small">Loading…</div>`);
+  try{
+    const r=await fetch(`https://api.github.com/repos/${GH.repo}/contents/${f.path}?ref=main`,
+      {headers:Object.assign(ghHeaders(),{'Accept':'application/vnd.github.raw'}),cache:'no-store'});
+    if(!r.ok)throw new Error(r.status);
+    const buf=await r.arrayBuffer();
+    const mime=mimeFor(f.ext);
+    const url=URL.createObjectURL(new Blob([buf],{type:mime}));
+    const box=$('#fileBox');if(!box)return;
+    if(mime.startsWith('image/'))box.innerHTML=`<img src="${url}" style="max-width:100%;border-radius:10px">`;
+    else if(mime==='application/pdf')box.innerHTML=
+      `<iframe src="${url}" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:10px"></iframe>
+       <a href="${url}" target="_blank" style="display:block;margin-top:8px;color:var(--teal);font-weight:600">Open full screen</a>`;
+    else box.innerHTML=
+      `<div class="small" style="margin-bottom:8px">No in-browser preview for this file type.</div>
+       <a href="${url}" download="${esc(f.name)}" style="display:block;color:var(--teal);font-weight:600">⬇ Download ${esc(f.name)}</a>`;
+  }catch(e){const box=$('#fileBox');if(box)box.textContent='Could not load the file — this needs internet and the sync token on this device.';}
 }
 window.addEventListener('online',()=>{if(localStorage.getItem('fp_dirty'))syncNow();});
 
@@ -379,7 +452,7 @@ function bizRow(s){
       <a href="#" onclick="togglePri('${s.id}');return false" style="${s.priority?'':'filter:grayscale(1);opacity:.5'}">⭐</a>
       <a href="#" onclick="quickNote('${s.id}');return false">📝</a>
       <a href="${esc(mapUrl(addr||s.business))}" target="_blank" rel="noopener">🧭</a>
-      ${c&&(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
+      ${c&&(custFiles(c).length||c.billLink)?`<a href="#" onclick="openCustomerFiles('${c.id}');return false">📎</a>`:''}
       ${c&&c.email?`<a href="mailto:${esc(c.email)}">✉️</a>`:''}
       ${c&&c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
     </div>
@@ -637,8 +710,8 @@ function openStopForm(id,date){
     <label>POC name</label><input name="pocName" id="stopPocName" value="${esc(c?c.contact:'')}">
     <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
     <label>POC email</label><input name="pocEmail" id="stopPocEmail" type="email" value="${esc(c?c.email:'')}">
-    <label>Bill photo ${c&&c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
-    <input type="file" name="billPhoto" accept="image/*,application/pdf">
+    <label>Attach files ${c&&custFiles(c).length?'('+custFiles(c).length+' already on file — new ones are added, not replaced)':'(optional — bill photo, PDF, spreadsheet, etc.)'}</label>
+    <input type="file" name="stopFiles" multiple accept="${FILE_ACCEPT}">
     <label>Activity</label><select name="activity">${ACTIVITIES.map(a=>`<option ${a===s.activity?'selected':''}>${a}</option>`).join('')}</select>
     <label>Status</label><select name="status">${DAY_STATUSES.map(a=>`<option ${a===s.status?'selected':''}>${a}</option>`).join('')}</select>
     <label style="display:flex;align-items:center;gap:8px;text-transform:none">
@@ -759,8 +832,8 @@ function submitStop(e,id){
   if(!id)s.ord=nextOrd(s.date);
   const c=upsertCustomerFromStop(f,s);
   s.customerId=c.id;
-  const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
-  if(bf)uploadBillPhoto(bf,c).catch(()=>alert('Bill photo upload failed — check your signal and try again from this business.'));
+  const bfs=e.target.stopFiles&&[...e.target.stopFiles.files];
+  if(bfs&&bfs.length)for(const bf of bfs)uploadCustomerFile(bf,c).catch(()=>alert('Attach failed for '+bf.name+' — check your signal and try again from this business.'));
   saveRec('stops',s);closeModal();return false;
 }
 
@@ -810,7 +883,7 @@ function rCustomers(){
         <div class="muted small">${c.lastVisit?'Last visit '+shortDay(c.lastVisit):'Never visited'}${c.account?' · #'+esc(c.account):''}</div>
       </div>
       <div class="links" onclick="event.stopPropagation()" style="white-space:nowrap">
-        ${(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄</a>`:''}
+        ${(custFiles(c).length||c.billLink)?`<a href="#" onclick="openCustomerFiles('${c.id}');return false">📎</a>`:''}
         ${c.phone?`<a href="tel:${esc(c.phone)}">📞</a>`:''}
         <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭</a>
       </div>
@@ -902,7 +975,7 @@ function openCustomerDetail(id){
     ${c.phone?`<a href="tel:${esc(c.phone)}">📞 Call</a>`:''}
     ${c.email?`<a href="mailto:${esc(c.email)}">✉️ Email</a>`:''}
     <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭 Map</a>
-    ${(c.billFile||c.billLink)?`<a href="#" onclick="viewBill('${c.id}');return false">📄 Bill</a>`:''}
+    <a href="#" onclick="openCustomerFiles('${c.id}');return false">📎 Files${custFiles(c).length?' ('+custFiles(c).length+')':''}</a>
   </div>
   <div class="muted small">${c.account?'Account #'+esc(c.account)+' · ':''}${esc(c.contact||'')}</div>
   ${c.notes?`<div class="small" style="margin-top:6px">${esc(c.notes)}</div>`:''}
@@ -930,9 +1003,9 @@ function openCustomerForm(id){
     <label>Primary contact</label><input name="contact" value="${esc(c.contact||'')}">
     <label>Phone</label><input name="phone" type="tel" value="${esc(c.phone||'')}">
     <label>Email</label><input name="email" type="email" value="${esc(c.email||'')}">
-    <label>Bill link</label><input name="billLink" value="${esc(c.billLink||'')}" placeholder="https://…">
-    <label>Bill photo ${c.billFile?'(one is saved — choosing a new one replaces it)':''}</label>
-    <input type="file" name="billPhoto" accept="image/*,application/pdf">
+    <label>External link (optional)</label><input name="billLink" value="${esc(c.billLink||'')}" placeholder="https://…">
+    <label>Attach files ${id&&custFiles(c).length?'('+custFiles(c).length+' already on file — new ones are added, not replaced)':'(optional — photos, PDFs, spreadsheets, etc.)'}</label>
+    <input type="file" name="custFiles" multiple accept="${FILE_ACCEPT}">
     <label>Last visit</label><input name="lastVisit" type="date" value="${esc(c.lastVisit||'')}">
     <label>Notes</label><textarea name="notes">${esc(c.notes||'')}</textarea>
     <button class="primary" type="submit">Save Customer</button>
@@ -943,8 +1016,8 @@ function submitCustomer(e,id){
   e.preventDefault();const f=new FormData(e.target);
   const c=id?custById(id):{id:uid()};
   for(const k of['name','account','address','town','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
-  const bf=e.target.billPhoto&&e.target.billPhoto.files[0];
-  if(bf)uploadBillPhoto(bf,c).catch(()=>alert('Bill photo upload failed — check your signal and try again.'));
+  const bfs=e.target.custFiles&&[...e.target.custFiles.files];
+  if(bfs&&bfs.length)for(const bf of bfs)uploadCustomerFile(bf,c).catch(()=>alert('Attach failed for '+bf.name+' — check your signal and try again.'));
   saveRec('customers',c);closeModal();return false;
 }
 
