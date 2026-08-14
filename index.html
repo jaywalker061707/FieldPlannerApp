@@ -708,8 +708,7 @@ function openStopForm(id,date){
       oninput="fillFromCustomer(this)" autocomplete="off">
     ${custDatalist()}
     <label>Address (optional — Maps finds most places by name)</label><input name="address" id="stopAddr" value="${esc(s.address||'')}">
-    <label>Town / Area (for filtering)</label><input name="town" id="stopTown" list="townlist" value="${esc(c?c.town:'')}" autocomplete="off">
-    ${townDatalist()}
+    <div class="muted small" style="margin:-6px 0 6px">Town is figured out from the address automatically.</div>
     <label>Account #</label><input name="account" id="stopAcct" value="${esc(c?c.account:'')}">
     <label>POC name</label><input name="pocName" id="stopPocName" value="${esc(c?c.contact:'')}">
     <label>POC phone</label><input name="pocPhone" id="stopPocPhone" type="tel" value="${esc(c?c.phone:'')}">
@@ -804,7 +803,6 @@ function fillFromCustomer(inp){
   const c=custByName(inp.value);
   if(!c)return;
   if(!$('#stopAddr').value)$('#stopAddr').value=c.address||'';
-  if(!$('#stopTown').value)$('#stopTown').value=c.town||'';
   if(!$('#stopAcct').value)$('#stopAcct').value=c.account||'';
   if(!$('#stopPocName').value)$('#stopPocName').value=c.contact||'';
   if(!$('#stopPocPhone').value)$('#stopPocPhone').value=c.phone||'';
@@ -814,9 +812,8 @@ function upsertCustomerFromStop(f,s){
   let c=custByName(s.business);
   const poc={contact:String(f.get('pocName')||'').trim(),phone:String(f.get('pocPhone')||'').trim(),email:String(f.get('pocEmail')||'').trim()};
   const acct=String(f.get('account')||'').trim();
-  const town=String(f.get('town')||'').trim();
   if(!c){
-    c={id:uid(),name:s.business,account:acct,address:s.address||'',town,contact:poc.contact,phone:poc.phone,
+    c={id:uid(),name:s.business,account:acct,address:s.address||'',town:guessTown(s.address),contact:poc.contact,phone:poc.phone,
        email:poc.email,billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()};
     db.customers.push(c);
   }else{
@@ -824,8 +821,8 @@ function upsertCustomerFromStop(f,s){
     if(poc.phone)c.phone=poc.phone;
     if(poc.email)c.email=poc.email;
     if(acct)c.account=acct;
-    if(town&&!c.town)c.town=town;
     if(s.address&&!c.address)c.address=s.address;
+    if(!c.town)c.town=guessTown(c.address);
     c.updatedAt=Date.now();
   }
   return c;
@@ -848,8 +845,9 @@ function submitStop(e,id){
 const US_STATE_ABBR=new Set(['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA',
   'ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD',
   'TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']);
-const TOWN_PREFIX_WORDS=new Set(['MC','MAC','MT','MOUNT','PORT','NEW','SAINT','ST','FORT','LAKE','WEST','EAST','NORTH','SOUTH']);
-const ADDR_NOISE_WORDS=new Set(['STE','SUITE','UNIT','APT','BLDG','BUILDING','FL','FLOOR','RM','ROOM','FRNT','REAR','OFC','OFFICE','STORE']);
+const TOWN_PREFIX_WORDS=new Set(['MC','MAC','MT','MOUNT','PORT','NEW','SAINT','FORT','LAKE']);
+const ADDR_NOISE_WORDS=new Set(['STE','SUITE','UNIT','APT','BLDG','BUILDING','FL','FLOOR','RM','ROOM','FRNT','REAR','OFC','OFFICE','STORE',
+  'ST','AVE','AVENUE','RD','ROAD','DR','DRIVE','LN','LANE','CT','CIR','CIRCLE','BLVD','PL','PLACE','TER','TERRACE','WAY','HWY','PIKE','TRL','TRAIL','PKWY']);
 function titleCase(s){return s.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
 function smartCase(w){return(/[a-z]/.test(w)&&/[A-Z]/.test(w.slice(1)))?w:titleCase(w);}
 function guessTown(address){
@@ -1061,7 +1059,7 @@ function runImport(){
     const parts=(line.includes('\t')?line.split('\t'):line.split(';')).map(p=>p.trim());
     const [name,account,address,town,contact,phone,email]=parts;
     if(!name||custByName(name)){skipped++;continue;}
-    db.customers.push({id:uid(),name,account:account||'',address:address||'',town:town||'',
+    db.customers.push({id:uid(),name,account:account||'',address:address||'',town:(town||'').trim()||guessTown(address),
       contact:contact||'',phone:phone||'',email:email||'',billLink:'',lastVisit:'',notes:'',updatedAt:Date.now()});
     added++;
   }
@@ -1120,6 +1118,7 @@ function submitCustomer(e,id){
   e.preventDefault();const f=new FormData(e.target);
   const c=id?custById(id):{id:uid()};
   for(const k of['name','account','address','town','contact','phone','email','billLink','lastVisit','notes'])c[k]=String(f.get(k)||'').trim();
+  if(!c.town)c.town=guessTown(c.address);
   const bfs=e.target.custFiles&&[...e.target.custFiles.files];
   if(bfs&&bfs.length)for(const bf of bfs)uploadCustomerFile(bf,c).catch(()=>alert('Attach failed for '+bf.name+' — check your signal and try again.'));
   saveRec('customers',c);closeModal();return false;
