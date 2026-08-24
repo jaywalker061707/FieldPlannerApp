@@ -1072,7 +1072,13 @@ function openCustomerDetail(id){
     <a href="${esc(mapUrl(c.address||c.name))}" target="_blank" rel="noopener">🧭 Map</a>
     <a href="#" onclick="openCustomerFiles('${c.id}');return false">📎 Files${custFiles(c).length?' ('+custFiles(c).length+')':''}</a>
   </div>
-  <div class="muted small">${c.account?'Account #'+esc(c.account)+' · ':''}${esc(c.contact||'')}</div>
+  <div class="small" style="line-height:1.7">
+    ${c.account?`<div><b>Account #</b> ${esc(c.account)}</div>`:''}
+    <div><b>Contact</b> ${c.contact?esc(c.contact):'<span class="muted">— not on file —</span>'}</div>
+    <div><b>Phone</b> ${c.phone?esc(c.phone):'<span class="muted">— not on file —</span>'}</div>
+    <div><b>Email</b> ${c.email?esc(c.email):'<span class="muted">— not on file —</span>'}</div>
+    ${c.address?`<div><b>Address</b> ${esc(c.address)}</div>`:''}
+  </div>
   ${c.notes?`<div class="small" style="margin-top:6px">${esc(c.notes)}</div>`:''}
   ${acts.length?`<h3>Open action items</h3>${acts.map(a=>`<div class="mini"><span class="grow">${esc(a.desc)}</span><span class="pr-${a.priority}">${a.priority}</span></div>`).join('')}`:''}
   ${visits.length?`<h3>Recent visits</h3>${visits.map(v=>`<div class="mini"><span class="t">${shortDay(v.date)}</span><span class="grow">${esc(v.notes||v.activity||'')}</span></div>`).join('')}`:''}
